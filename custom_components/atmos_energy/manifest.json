@@ -2,9 +2,12 @@
   "domain": "atmos_energy",
   "name": "Atmos Energy",
   "version": "1.0.0",
-  "documentation": "https://github.com/sudhe/ha-atmos-energy",
+  "documentation": "https://github.com/Valdorama/ha-atmos-energy-sensor",
+  "issue_tracker": "https://github.com/Valdorama/ha-atmos-energy-sensor/issues",
   "dependencies": [],
-  "codeowners": [],
+  "codeowners": [
+    "@Valdorama"
+  ],
   "requirements": [
     "aiohttp>=3.8.0",
     "beautifulsoup4>=4.12.0",
