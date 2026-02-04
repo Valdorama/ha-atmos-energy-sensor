@@ -30,5 +30,15 @@ A custom component for Home Assistant to retrieve usage data from [Atmos Energy]
 3. Search for **Atmos Energy**.
 4. Enter your Atmos Energy **Username** and **Password**.
 
+### Cost Configuration
+To improve the accuracy of the estimated cost sensor, you can configure your specific rates:
+1. Go to **Settings > Devices & Services**.
+2. Click on the **Atmos Energy** integration card.
+3. Click **Configure**.
+4. Adjust the following values found on your bill:
+    - **Fixed Cost**: The base monthly charge/customer charge.
+    - **Usage Rate ($/CCF)**: The total cost per unit of gas. **Note:** This should be the **sum** of all individual per-unit costs (e.g., Distribution Charge + Pipeline Charge + Rider GCR).
+    - **Tax Percent**: Your local tax rate.
+
 ## Troubleshooting
 If you have issues logging in, ensure you can log in to the [Atmos Energy website](https://www.atmosenergy.com/) directly.
