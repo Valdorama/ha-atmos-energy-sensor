@@ -1,0 +1,35 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Connect to Atmos Energy",
+                "description": "Please enter your Atmos Energy credentials to retrieve your usage data.",
+                "data": {
+                    "username": "Username",
+                    "password": "Password"
+                }
+            }
+        },
+        "error": {
+            "auth_error": "Authentication failed. Please check your username and password.",
+            "cannot_connect": "Failed to connect to Atmos Energy.",
+            "unknown": "Unexpected error."
+        },
+        "abort": {
+            "already_configured": "Account is already configured."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Cost Configuration",
+                "description": "Configure rates to estimate your bill. You can find these values on your physical bill.",
+                "data": {
+                    "fixed_cost": "Fixed Monthly Cost ($)",
+                    "usage_rate": "Usage Rate ($/CCF)",
+                    "tax_percent": "Tax Rate (%)"
+                }
+            }
+        }
+    }
+}

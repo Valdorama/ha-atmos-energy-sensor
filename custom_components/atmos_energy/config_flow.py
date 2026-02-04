@@ -21,6 +21,10 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+            # Prevent duplicates
+            await self.async_set_unique_id(user_input[CONF_USERNAME])
+            self._abort_if_unique_id_configured()
+
             # Validate credentials
             username = user_input[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
@@ -61,7 +65,7 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry):
         """Initialize options flow."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""
@@ -73,16 +77,16 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        "fixed_cost", # Needs to match const but using literal here or import
-                        default=self.config_entry.options.get("fixed_cost", 25.03)
+                        "fixed_cost",
+                        default=self._config_entry.options.get("fixed_cost", 25.03)
                     ): float,
                     vol.Required(
                         "usage_rate", 
-                        default=self.config_entry.options.get("usage_rate", 2.40)
+                        default=self._config_entry.options.get("usage_rate", 2.40)
                     ): float,
                     vol.Required(
                         "tax_percent", 
-                        default=self.config_entry.options.get("tax_percent", 8.0)
+                        default=self._config_entry.options.get("tax_percent", 8.0)
                     ): float,
                 }
             ),

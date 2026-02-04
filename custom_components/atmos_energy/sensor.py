@@ -23,7 +23,7 @@ class AtmosEnergyUsageSensor(CoordinatorEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.GAS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_native_unit_of_measurement = "ccf" # or "therms", can be configurable
+    _attr_native_unit_of_measurement = "CCF" # or "therms", can be configurable
     _attr_name = "Atmos Energy Gas Usage"
 
     def __init__(self, coordinator):
