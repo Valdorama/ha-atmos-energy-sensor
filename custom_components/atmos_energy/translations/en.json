@@ -1,5 +1,6 @@
 {
     "config": {
+        "flow_title": "{name}",
         "step": {
             "user": {
                 "title": "Connect to Atmos Energy",
@@ -7,6 +8,10 @@
                 "data": {
                     "username": "Username",
                     "password": "Password"
+                },
+                "data_description": {
+                    "username": "Your Atmos Energy account email or username",
+                    "password": "Your Atmos Energy account password"
                 }
             }
         },
@@ -16,7 +21,7 @@
             "unknown": "Unexpected error."
         },
         "abort": {
-            "already_configured": "Account is already configured."
+            "already_configured": "This account is already configured."
         }
     },
     "options": {
