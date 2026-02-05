@@ -1,17 +1,17 @@
 """Constants for the Atmos Energy integration."""
 from datetime import timedelta
+from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 
 DOMAIN = "atmos_energy"
 
 # Configuration Keys
-CONF_USERNAME = "username"
-CONF_PASSWORD = "password"
 CONF_FIXED_COST = "fixed_cost"
 CONF_USAGE_RATE = "usage_rate" # $/CCF
 CONF_TAX_PERCENT = "tax_percent"
 
 # Defaults
 DEFAULT_NAME = "Atmos Energy"
+# Update once per day - Atmos updates usage data daily
 SCAN_INTERVAL = timedelta(hours=24)
 TIMEOUT = 60
 DEFAULT_FIXED_COST = 25.03

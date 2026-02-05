@@ -1,4 +1,4 @@
-"""Sensor platform for Atmos Energy."""
+from typing import Any
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -10,7 +10,7 @@ from .const import DOMAIN, ATTR_USAGE, ATTR_AMOUNT_DUE, ATTR_DUE_DATE, ATTR_BILL
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
-):
+) -> None:
     """Set up the Atmos Energy sensor platform."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     account_id = entry.data.get(CONF_USERNAME, "unknown")
@@ -74,10 +74,10 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
     """Representation of an Atmos Energy Cost Sensor."""
 
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "USD"
     _attr_name = "Estimated Cost"
-    _attr_icon = "mdi:cash"
+    _attr_icon = "mdi:currency-usd"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
@@ -106,7 +106,7 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
         return round(total_cost, 2)
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
         return {
             "account_id": self._account_id,

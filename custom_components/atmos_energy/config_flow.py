@@ -8,6 +8,7 @@ import homeassistant.helpers.config_validation as cv
 
 from .const import DOMAIN
 from .api import AtmosEnergyApiClient
+from .exceptions import AuthenticationError, APIError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,13 +35,16 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             
             try:
                 await client.login()
-                await client.close()
-            except Exception:
-                errors["base"] = "auth_error"
-            else:
                 return self.async_create_entry(
                     title=user_input[CONF_USERNAME], data=user_input
                 )
+            except AuthenticationError:
+                errors["base"] = "invalid_auth"
+            except (APIError, Exception) as err:
+                _LOGGER.exception("Unexpected error during authentication: %s", err)
+                errors["base"] = "cannot_connect"
+            finally:
+                await client.close()
 
         return self.async_show_form(
             step_id="user",
@@ -51,6 +55,40 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_reauth(self, user_input=None):
+        """Handle reauth flow."""
+        errors = {}
+        
+        if user_input is not None:
+            username = self._get_reauth_entry().data[CONF_USERNAME]
+            password = user_input[CONF_PASSWORD]
+            
+            client = AtmosEnergyApiClient(username, password)
+            try:
+                await client.login()
+                self.hass.config_entries.async_update_entry(
+                    self._get_reauth_entry(),
+                    data={**self._get_reauth_entry().data, CONF_PASSWORD: password}
+                )
+                await self.hass.config_entries.async_reload(self._get_reauth_entry().entry_id)
+                return self.async_abort(reason="reauth_successful")
+            except AuthenticationError:
+                errors["base"] = "invalid_auth"
+            except Exception:
+                _LOGGER.exception("Unexpected error during reauth")
+                errors["base"] = "unknown"
+            finally:
+                await client.close()
+        
+        return self.async_show_form(
+            step_id="reauth",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            errors=errors,
+            description_placeholders={
+                "username": self._get_reauth_entry().data[CONF_USERNAME]
+            },
         )
 
     @staticmethod
@@ -79,15 +117,15 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required(
                         "fixed_cost",
                         default=self._config_entry.options.get("fixed_cost", 25.03)
-                    ): float,
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0, max=1000)),
                     vol.Required(
                         "usage_rate", 
                         default=self._config_entry.options.get("usage_rate", 2.40)
-                    ): float,
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
                     vol.Required(
                         "tax_percent", 
                         default=self._config_entry.options.get("tax_percent", 8.0)
-                    ): float,
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
                 }
             ),
         )
