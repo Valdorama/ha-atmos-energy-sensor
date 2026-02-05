@@ -155,6 +155,12 @@ class AtmosEnergyApiClient:
         }
         
         async with await self._request_with_retry('get', url, params=params, headers=headers) as response:
+            # Detect redirect to login page
+            final_url = str(response.url)
+            if "login.html" in final_url.lower() or "authenticate.html" in final_url.lower():
+                _LOGGER.warning("Usage download redirected to login page: %s", final_url)
+                raise AuthenticationError("Session expired or redirected to login during download")
+                
             content = await response.read()
             
         return await self._parse_xls_data(content)
@@ -170,15 +176,25 @@ class AtmosEnergyApiClient:
             
             # Check if it looks like HTML (often happens if redirected to login/error page)
             if stripped_content.startswith(b"<!DOCTYP") or stripped_content.startswith(b"<html"):
-                try:
-                    html_text = stripped_content[:1000].decode('utf-8', errors='replace')
-                    _LOGGER.warning(
-                        "Received HTML instead of XLS. This could be a login redirect or error page. "
-                        "First 500 chars: %s", 
-                        html_text[:500]
-                    )
-                except Exception:
-                    _LOGGER.warning("Received HTML but could not decode it for diagnostic logging.")
+                html_text = stripped_content[:2000].decode('utf-8', errors='replace').lower()
+                
+                # Check for login indicators in the HTML
+                login_indicators = ["login", "username", "password", "authenticate", "logon"]
+                if any(ind in html_text for ind in login_indicators):
+                    _LOGGER.warning("Received HTML appears to be a login page.")
+                    raise AuthenticationError("Received a login page instead of the expected usage data")
+                
+                # Check for other error indicators
+                error_indicators = ["access denied", "session expired", "not authorized"]
+                if any(ind in html_text for ind in error_indicators):
+                    _LOGGER.warning("Received HTML appears to be an error page: %s", html_text[:200])
+                    raise APIError(f"Atmos Energy portal returned an error page: {[i for i in error_indicators if i in html_text][0]}")
+
+                # Diagnostic logging if it's not a known error but still HTML
+                _LOGGER.info(
+                    "Received HTML instead of XLS. Attempting to parse as table. First 500 chars: %s", 
+                    html_text[:500]
+                )
                 
                 # Attempt HTML parsing fallback
                 try:
