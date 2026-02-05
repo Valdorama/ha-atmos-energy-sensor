@@ -165,22 +165,44 @@ class AtmosEnergyApiClient:
             import pandas as pd
             from io import BytesIO
             
-            # Strip leading/trailing whitespace (e.g. \r\n) that some versions of Atmos
-            # might include before the actual Excel BOF record.
+            # Strip leading/trailing whitespace (e.g. \r\n)
             stripped_content = content.strip()
             
-            try:
+            # Check if it looks like HTML (often happens if redirected to login/error page)
+            if stripped_content.startswith(b"<!DOCTYP") or stripped_content.startswith(b"<html"):
                 try:
-                    df = pd.read_excel(BytesIO(stripped_content))
+                    html_text = stripped_content[:1000].decode('utf-8', errors='replace')
+                    _LOGGER.warning(
+                        "Received HTML instead of XLS. This could be a login redirect or error page. "
+                        "First 500 chars: %s", 
+                        html_text[:500]
+                    )
                 except Exception:
-                    df = pd.read_excel(BytesIO(stripped_content), engine='xlrd')
-            except Exception as e:
-                _LOGGER.error(
-                    "Failed to parse XLS (first 50 bytes: %s): %s",
-                    stripped_content[:50].hex(' '),
-                    e
-                )
-                raise DataParseError(f"Could not read Excel file: {e}") from e
+                    _LOGGER.warning("Received HTML but could not decode it for diagnostic logging.")
+                
+                # Attempt HTML parsing fallback
+                try:
+                    dfs = pd.read_html(BytesIO(stripped_content))
+                    if dfs:
+                        df = dfs[0]
+                    else:
+                        raise DataParseError("HTML received but no tables found")
+                except Exception as e:
+                    raise DataParseError(f"Received HTML which couldn't be parsed: {e}") from e
+            else:
+                # Standard Excel parsing
+                try:
+                    try:
+                        df = pd.read_excel(BytesIO(stripped_content))
+                    except Exception:
+                        df = pd.read_excel(BytesIO(stripped_content), engine='xlrd')
+                except Exception as e:
+                    _LOGGER.error(
+                        "Failed to parse XLS (first 50 bytes: %s): %s",
+                        stripped_content[:50].hex(' '),
+                        e
+                    )
+                    raise DataParseError(f"Could not read Excel file: {e}") from e
                 
             # Normalize column names to lowercase/stripped
             df.columns = [str(c).lower().strip() for c in df.columns]

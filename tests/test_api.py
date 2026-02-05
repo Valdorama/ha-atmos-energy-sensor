@@ -69,5 +69,32 @@ class TestAtmosEnergyApi(unittest.TestCase):
         with self.assertRaises(DataParseError):
             loop.run_until_complete(self.api._parse_xls_data(b"not an excel file"))
 
+    def test_parse_html_fallback(self):
+        """Test parsing HTML content mislabeled as XLS."""
+        html_content = b"""
+        <!DOCTYPE html>
+        <html>
+        <body>
+        <table border="1">
+          <tr>
+            <th>Date</th>
+            <th>Consumption</th>
+          </tr>
+          <tr>
+            <td>01/30/2026</td>
+            <td>10.5</td>
+          </tr>
+        </table>
+        </body>
+        </html>
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(self.api._parse_xls_data(html_content))
+        
+        self.assertIn("total_usage", result)
+        self.assertEqual(result["total_usage"], 10.5)
+        self.assertEqual(result["latest_usage"], 10.5)
+
 if __name__ == '__main__':
     unittest.main()
