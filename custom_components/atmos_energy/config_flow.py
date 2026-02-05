@@ -6,7 +6,7 @@ from homeassistant.core import callback
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_DAILY_SENSOR, CONF_MONTHLY_SENSOR
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError
 
@@ -126,6 +126,14 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
                         "tax_percent", 
                         default=self._config_entry.options.get("tax_percent", 8.0)
                     ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+                    vol.Optional(
+                        CONF_DAILY_SENSOR,
+                        default=self._config_entry.options.get(CONF_DAILY_SENSOR, False)
+                    ): bool,
+                    vol.Optional(
+                        CONF_MONTHLY_SENSOR,
+                        default=self._config_entry.options.get(CONF_MONTHLY_SENSOR, False)
+                    ): bool,
                 }
             ),
         )

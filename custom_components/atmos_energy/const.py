@@ -8,6 +8,8 @@ DOMAIN = "atmos_energy"
 CONF_FIXED_COST = "fixed_cost"
 CONF_USAGE_RATE = "usage_rate" # $/CCF
 CONF_TAX_PERCENT = "tax_percent"
+CONF_DAILY_SENSOR = "daily_sensor"
+CONF_MONTHLY_SENSOR = "monthly_sensor"
 
 # Defaults
 DEFAULT_NAME = "Atmos Energy"
@@ -23,3 +25,4 @@ ATTR_BILL_DATE = "bill_date"
 ATTR_DUE_DATE = "due_date"
 ATTR_AMOUNT_DUE = "amount_due"
 ATTR_USAGE = "usage"
+ATTR_DAILY_USAGE = "daily_usage"

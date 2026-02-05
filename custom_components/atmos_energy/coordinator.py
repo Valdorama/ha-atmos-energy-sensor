@@ -37,6 +37,13 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 elif usage > 5000: # Sanity check: 5000 CCF is a massive amount of gas
                     _LOGGER.warning("Unusually high gas usage detected: %s CCF", usage)
             
+            daily_usage = data.get("daily_usage")
+            if daily_usage is not None:
+                if daily_usage < 0:
+                    data["daily_usage"] = 0.0
+                elif daily_usage > 500: # Sanity check for a single day
+                    _LOGGER.warning("Unusually high daily gas usage detected: %s CCF", daily_usage)
+            
             return data
             
         except AuthenticationError as err:

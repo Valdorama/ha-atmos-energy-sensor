@@ -32,7 +32,9 @@
                 "data": {
                     "fixed_cost": "Fixed Monthly Cost ($)",
                     "usage_rate": "Usage Rate ($/CCF)",
-                    "tax_percent": "Tax Rate (%)"
+                    "tax_percent": "Tax Rate (%)",
+                    "daily_sensor": "Create Daily Usage Sensor",
+                    "monthly_sensor": "Create Monthly Usage Sensor"
                 }
             }
         }

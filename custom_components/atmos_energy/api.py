@@ -191,15 +191,22 @@ class AtmosEnergyApiClient:
             df = df.dropna(subset=['consumption'])
             
             total_usage = float(df['consumption'].sum())
+            latest_usage = float(df['consumption'].iloc[-1]) if not df.empty else 0.0
             latest_date = None
             if date_col and not df.empty:
                 # Convert date to string format for HA
                 latest_date_raw = df[date_col].iloc[-1]
                 latest_date = str(latest_date_raw)
+                first_date_raw = df[date_col].iloc[0]
+                first_date = str(first_date_raw)
+            else:
+                first_date = None
                     
             return {
                 "total_usage": total_usage,
+                "latest_usage": latest_usage,
                 "latest_date": latest_date,
+                "billing_period_start": first_date,
                 "period": "Current"
             }
 
@@ -215,7 +222,8 @@ class AtmosEnergyApiClient:
             "bill_date": usage_data.get("latest_date"),
             "due_date": "Unknown",
             "amount_due": None,
-            "usage": usage_data.get("total_usage", 0.0)
+            "usage": usage_data.get("total_usage", 0.0),
+            "daily_usage": usage_data.get("latest_usage", 0.0)
         }
         
     async def close(self):
