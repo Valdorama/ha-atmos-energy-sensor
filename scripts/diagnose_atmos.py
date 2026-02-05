@@ -18,7 +18,7 @@ sys.modules["homeassistant.components.sensor"] = MagicMock()
 
 # Import components from the integration
 # We need to add the parent directory to sys.path to find custom_components
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), ".")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from custom_components.atmos_energy.api import AtmosEnergyApiClient
 from custom_components.atmos_energy.exceptions import AuthenticationError, APIError
