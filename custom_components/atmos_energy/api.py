@@ -165,16 +165,21 @@ class AtmosEnergyApiClient:
             import pandas as pd
             from io import BytesIO
             
+            # Strip leading/trailing whitespace (e.g. \r\n) that some versions of Atmos
+            # might include before the actual Excel BOF record.
+            stripped_content = content.strip()
+            
             try:
-                # pandas handles both .xls (xlrd) and .xlsx (openpyxl) seamlessly if installed
-                # We try without specifying engine first, but we can fallback
                 try:
-                    df = pd.read_excel(BytesIO(content))
+                    df = pd.read_excel(BytesIO(stripped_content))
                 except Exception:
-                    # Explicit fallback for .xls if engine detection fails
-                    df = pd.read_excel(BytesIO(content), engine='xlrd')
+                    df = pd.read_excel(BytesIO(stripped_content), engine='xlrd')
             except Exception as e:
-                _LOGGER.error("Failed to parse XLS: %s", e)
+                _LOGGER.error(
+                    "Failed to parse XLS (first 50 bytes: %s): %s",
+                    stripped_content[:50].hex(' '),
+                    e
+                )
                 raise DataParseError(f"Could not read Excel file: {e}") from e
                 
             # Normalize column names to lowercase/stripped
