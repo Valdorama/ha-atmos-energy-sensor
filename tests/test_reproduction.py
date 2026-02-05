@@ -20,7 +20,7 @@ sys.modules["homeassistant.components.sensor"] = MagicMock()
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from custom_components.atmos_energy.api import AtmosEnergyApiClient
-from custom_components.atmos_energy.exceptions import DataParseError, AuthenticationError
+from custom_components.atmos_energy.exceptions import DataParseError, AuthenticationError, APIError
 
 class TestIssueReproduction(unittest.TestCase):
     def setUp(self):
@@ -77,26 +77,67 @@ class TestIssueReproduction(unittest.TestCase):
             loop.close()
 
     @patch('custom_components.atmos_energy.api.AtmosEnergyApiClient._request_with_retry')
-    def test_get_daily_usage_redirect_detection(self, mock_request):
+    def test_login_follow_redirects_and_landing_page(self, mock_request):
         """
-        Test that get_daily_usage can detect when a request is redirected to a login page.
+        Test that login follows redirects and visits the usage landing page.
         """
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            # Mock redirect to login.html
-            mock_resp = loop.run_until_complete(self._mock_response(
-                b"<html>login page</html>", 
+            # 1. Mock first GET to login page
+            mock_login_page = loop.run_until_complete(self._mock_response(
+                b'<html><input name="formId" value="token123"></html>',
                 "https://www.atmosenergy.com/accountcenter/logon/login.html"
+            ))
+            
+            # 2. Mock POST redirect to account home
+            mock_post_resp = loop.run_until_complete(self._mock_response(
+                b"<html>Account Home</html>",
+                "https://www.atmosenergy.com/accountcenter/home/accountHome.html"
+            ))
+            
+            # 3. Mock GET landing page
+            mock_landing_resp = loop.run_until_complete(self._mock_response(
+                b"<html>Usage Landing</html>",
+                "https://www.atmosenergy.com/accountcenter/usagehistory/UsageHistoryLanding.html"
+            ))
+            
+            mock_request.side_effect = [mock_login_page, mock_post_resp, mock_landing_resp]
+            
+            # We must mock check_session to return False initially to trigger login
+            with patch.object(self.api, 'check_session', return_value=False):
+                loop.run_until_complete(self.api.login())
+                
+            # Verify 3 calls were made
+            self.assertEqual(mock_request.call_count, 3)
+            # Verify second call (POST) had allow_redirects=True
+            self.assertEqual(mock_request.call_args_list[1][1]['allow_redirects'], True)
+            
+        finally:
+            loop.close()
+
+    @patch('custom_components.atmos_energy.api.AtmosEnergyApiClient._request_with_retry')
+    def test_get_daily_usage_error_landing_page(self, mock_request):
+        """
+        Test that get_daily_usage detects the success/error landing page.
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Mock redirect to successErrorMessage.html
+            mock_resp = loop.run_until_complete(self._mock_response(
+                b"<html>error message</html>", 
+                "https://www.atmosenergy.com/accountcenter/successerror/successErrorMessage.html"
             ))
             mock_request.return_value = mock_resp
             
-            # Mock login to succeed so we can test the usage call
+            # Mock login to succeed
             with patch.object(self.api, 'login', return_value=None):
-                # TDD: We now expect AuthenticationError
-                with self.assertRaises(AuthenticationError):
+                with self.assertRaises(APIError) as cm:
                     loop.run_until_complete(self.api.get_daily_usage())
+                self.assertIn("error page", str(cm.exception))
         finally:
             loop.close()
 

@@ -126,21 +126,29 @@ class AtmosEnergyApiClient:
         headers['Referer'] = login_page_url
 
         _LOGGER.debug("Attempting login for user: %s***", self._username[:3])
-        async with await self._request_with_retry('post', login_action_url, data=payload, headers=headers, allow_redirects=False) as response:
-            # Check for redirect to login (auth failure)
-            if response.status == 302:
-                location = response.headers.get("Location", "")
-                if "login" in location.lower():
-                    raise AuthenticationError("Invalid username or password (redirected to login)")
+        async with await self._request_with_retry('post', login_action_url, data=payload, headers=headers, allow_redirects=True) as response:
+            final_url = str(response.url)
             
-            # Check for error messages in 200 OK response
-            if response.status == 200:
+            # If we are still on a login or authenticate page, it failed
+            if "login.html" in final_url.lower() or "authenticate.html" in final_url.lower():
                 text = await response.text()
                 error_phrases = ["invalid username", "invalid password", "authentication failed", "login failed"]
                 if any(phrase in text.lower() for phrase in error_phrases):
                     raise AuthenticationError("Invalid username or password")
+                raise AuthenticationError(f"Login failed (still on login page): {final_url}")
+            
+            if response.status != 200:
+                raise AuthenticationError(f"Login failed with status {response.status}")
 
-        _LOGGER.debug("Login successful")
+        # 3. CRITICAL: Visit the Usage Landing page to initialize the session for downloads
+        _LOGGER.debug("Initializing usage session...")
+        landing_url = f"{self._base_url}/accountcenter/usagehistory/UsageHistoryLanding.html"
+        headers['Referer'] = login_action_url
+        async with await self._request_with_retry('get', landing_url, headers=headers) as response:
+            if response.status != 200:
+                _LOGGER.warning("Failed to visit usage landing page (status %d)", response.status)
+            
+        _LOGGER.debug("Login and session initialization successful")
 
     async def get_daily_usage(self):
         """Fetch and parse daily usage data."""
@@ -155,11 +163,15 @@ class AtmosEnergyApiClient:
         }
         
         async with await self._request_with_retry('get', url, params=params, headers=headers) as response:
-            # Detect redirect to login page
+            # Detect redirect to login or error page
             final_url = str(response.url)
             if "login.html" in final_url.lower() or "authenticate.html" in final_url.lower():
                 _LOGGER.warning("Usage download redirected to login page: %s", final_url)
                 raise AuthenticationError("Session expired or redirected to login during download")
+            
+            if "successerrormessage.html" in final_url.lower():
+                _LOGGER.warning("Usage download redirected to error page: %s", final_url)
+                raise APIError("Usage history download failed (portal redirected to success/error page)")
                 
             content = await response.read()
             
