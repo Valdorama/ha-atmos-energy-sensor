@@ -1,5 +1,7 @@
 # Atmos Energy Home Assistant Integration
 
+[![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg)](https://buymeacoffee.com/valdorama)
+
 A custom component for Home Assistant to retrieve usage data from [Atmos Energy](https://www.atmosenergy.com/).
 
 **Disclaimer**: This is an unofficial integration and is not affiliated with Atmos Energy. It scrapes the website to retrieve data, so changes to the Atmos Energy website may break this integration.
