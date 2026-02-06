@@ -40,7 +40,7 @@ async def async_setup_entry(
 class AtmosEnergyBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Atmos Energy sensors."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
@@ -65,7 +65,8 @@ class AtmosEnergyUsageSensor(AtmosEnergyBaseSensor):
     _attr_device_class = SensorDeviceClass.GAS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "atmos_energy_usage"
+    _attr_name = "Atmos Energy Gas Usage"
+    _attr_suggested_object_id = f"{DOMAIN}_usage"
     _attr_icon = "mdi:gas-burner"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
@@ -100,7 +101,8 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "USD"
-    _attr_name = "atmos_energy_estimated_cost"
+    _attr_name = "Atmos Energy Estimated Cost"
+    _attr_suggested_object_id = f"{DOMAIN}_estimated_cost"
     _attr_icon = "mdi:currency-usd"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
@@ -145,7 +147,8 @@ class AtmosEnergyDailyUsageSensor(AtmosEnergyBaseSensor):
     _attr_device_class = SensorDeviceClass.GAS
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "atmos_energy_daily_usage"
+    _attr_name = "Atmos Energy Daily Usage"
+    _attr_suggested_object_id = f"{DOMAIN}_daily_usage"
     _attr_icon = "mdi:gas-burner"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
@@ -173,7 +176,8 @@ class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
     _attr_device_class = SensorDeviceClass.GAS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "atmos_energy_monthly_usage"
+    _attr_name = "Atmos Energy Monthly Usage"
+    _attr_suggested_object_id = f"{DOMAIN}_monthly_usage"
     _attr_icon = "mdi:gas-burner"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
