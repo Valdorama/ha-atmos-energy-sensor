@@ -40,6 +40,8 @@ async def async_setup_entry(
 class AtmosEnergyBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Atmos Energy sensors."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
         super().__init__(coordinator)
@@ -54,7 +56,6 @@ class AtmosEnergyBaseSensor(CoordinatorEntity, SensorEntity):
             "name": f"Atmos Energy ({self._account_id})",
             "manufacturer": "Atmos Energy",
             "model": "Gas Meter",
-            "entry_type": "service",
         }
 
 
@@ -64,7 +65,7 @@ class AtmosEnergyUsageSensor(AtmosEnergyBaseSensor):
     _attr_device_class = SensorDeviceClass.GAS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "Gas Usage"
+    _attr_name = "atmos_energy_usage"
     _attr_icon = "mdi:gas-burner"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
@@ -97,9 +98,9 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
     """Representation of an Atmos Energy Cost Sensor."""
 
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "USD"
-    _attr_name = "Estimated Cost"
+    _attr_name = "atmos_energy_estimated_cost"
     _attr_icon = "mdi:currency-usd"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
@@ -144,7 +145,7 @@ class AtmosEnergyDailyUsageSensor(AtmosEnergyBaseSensor):
     _attr_device_class = SensorDeviceClass.GAS
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "Daily Gas Usage"
+    _attr_name = "atmos_energy_daily_usage"
     _attr_icon = "mdi:gas-burner"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
@@ -172,7 +173,7 @@ class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
     _attr_device_class = SensorDeviceClass.GAS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "Monthly Gas Usage"
+    _attr_name = "atmos_energy_monthly_usage"
     _attr_icon = "mdi:gas-burner"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
