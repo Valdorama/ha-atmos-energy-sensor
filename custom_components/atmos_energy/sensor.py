@@ -19,7 +19,11 @@ from .const import (
     ATTR_DUE_DATE, 
     ATTR_BILL_DATE,
     ATTR_BILLING_PERIOD_START,
-    CONF_WEATHER_ENTITY
+    CONF_WEATHER_ENTITY,
+    CONF_DAILY_USAGE,
+    ATTR_METER_READ_DATE,
+    ATTR_AVG_TEMP,
+    ATTR_BILLING_MONTH
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,17 +34,23 @@ async def async_setup_entry(
     """Set up the Atmos Energy sensor platform."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     account_id = entry.data.get(CONF_USERNAME, "unknown")
+    daily_usage = entry.data.get(CONF_DAILY_USAGE, True)
 
-    entities = [
-        AtmosEnergyUsageSensor(coordinator, entry, account_id),
-        AtmosEnergyCostSensor(coordinator, entry, account_id),
-        AtmosEnergyDaysRemainingSensor(coordinator, entry, account_id),
-    ]
+    if daily_usage:
+        entities = [
+            AtmosEnergyUsageSensor(coordinator, entry, account_id),
+            AtmosEnergyCostSensor(coordinator, entry, account_id),
+            AtmosEnergyDaysRemainingSensor(coordinator, entry, account_id),
+        ]
 
-    weather_entity = entry.options.get(CONF_WEATHER_ENTITY)
-    if weather_entity:
-        entities.append(AtmosEnergyPredictedUsageSensor(coordinator, entry, account_id, weather_entity))
-        entities.append(AtmosEnergyPredictedCostSensor(coordinator, entry, account_id, weather_entity))
+        weather_entity = entry.options.get(CONF_WEATHER_ENTITY)
+        if weather_entity:
+            entities.append(AtmosEnergyPredictedUsageSensor(coordinator, entry, account_id, weather_entity))
+            entities.append(AtmosEnergyPredictedCostSensor(coordinator, entry, account_id, weather_entity))
+    else:
+        entities = [
+            AtmosEnergyMonthlyUsageSensor(coordinator, entry, account_id),
+        ]
 
     async_add_entities(entities)
 
@@ -334,4 +344,41 @@ class AtmosEnergyPredictedCostSensor(AtmosEnergyPredictedUsageSensor):
         # but for simple "next 7 days cost" usage * rate is the most useful metric.
         
         return round(usage * rate, 2)
+
+
+class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
+    """Representation of an Atmos Energy Monthly Usage Sensor."""
+
+    _attr_device_class = None
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "CCF"
+    _attr_name = "Gas Usage (Previous Billing Period)"
+    _attr_suggested_object_id = f"{DOMAIN}_monthly_usage"
+    _attr_icon = "mdi:gas-burner"
+
+    def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, account_id)
+        self._attr_unique_id = f"{DOMAIN}_{account_id}_monthly_usage"
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get(ATTR_USAGE)
+
+    @property
+    def extra_state_attributes(self):
+        """Return extra state attributes."""
+        if not self.coordinator.data:
+            return {"account_id": self._account_id}
+            
+        return {
+            "account_id": self._account_id,
+            ATTR_BILL_DATE: self.coordinator.data.get(ATTR_BILL_DATE),
+            ATTR_METER_READ_DATE: self.coordinator.data.get(ATTR_METER_READ_DATE),
+            ATTR_AVG_TEMP: self.coordinator.data.get(ATTR_AVG_TEMP),
+            ATTR_BILLING_MONTH: self.coordinator.data.get(ATTR_BILLING_MONTH),
+        }
 

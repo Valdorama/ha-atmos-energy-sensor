@@ -121,5 +121,36 @@ class TestIssueReproduction(unittest.TestCase):
         finally:
             loop.close()
 
+    def test_parse_monthly_xls_data(self):
+        """
+        Test parsing the monthly usage XLS file.
+        """
+        file_path = os.path.join(os.path.dirname(__file__), 'data', 'monthly usage.xls')
+        with open(file_path, 'rb') as f:
+            content = f.read()
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(self.api._parse_monthly_xls_data(content))
+            
+            # Based on the Get-Content output we saw:
+            # Charge Date: 01/12/2026
+            # Consumption: 62.0
+            # Avg Temp: 60
+            # Billing Month: Jan 26
+            
+            self.assertIn('usage', result)
+            self.assertEqual(result['usage'], 62.0)
+            self.assertIn('charge_date', result)
+            self.assertIn('2026-01-12', result['charge_date']) # pd.to_datetime might format it
+            self.assertEqual(result['avg_temp'], 60.0)
+            self.assertEqual(result['billing_month'], 'Jan 26')
+            self.assertIn('meter_read_date', result)
+            
+        finally:
+            loop.close()
+
 if __name__ == '__main__':
     unittest.main()

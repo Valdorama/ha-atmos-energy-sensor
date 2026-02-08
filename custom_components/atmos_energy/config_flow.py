@@ -12,7 +12,8 @@ from .const import (
     CONF_FIXED_COST, 
     CONF_USAGE_RATE, 
     CONF_TAX_PERCENT, 
-    CONF_WEATHER_ENTITY
+    CONF_WEATHER_ENTITY,
+    CONF_DAILY_USAGE
 )
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError
@@ -46,7 +47,14 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 await client.login()
                 self._user_data = user_input
-                return await self.async_step_cost()
+                if user_input.get(CONF_DAILY_USAGE, True):
+                    return await self.async_step_cost()
+                
+                return self.async_create_entry(
+                    title=self._user_data[CONF_USERNAME], 
+                    data=self._user_data,
+                    options={}
+                )
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
             except (APIError, Exception) as err:
@@ -61,6 +69,7 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
+                    vol.Required(CONF_DAILY_USAGE, default=True): bool,
                 }
             ),
             errors=errors,

@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, SCAN_INTERVAL
+from .const import DOMAIN, SCAN_INTERVAL, CONF_DAILY_USAGE
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError, DataParseError
 
@@ -28,8 +28,9 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
+        daily_usage = self.config_entry.data.get(CONF_DAILY_USAGE, True)
         try:
-            data = await self.client.get_account_data()
+            data = await self.client.get_account_data(daily_usage=daily_usage)
             
             # Basic validation
             usage = data.get("usage")

@@ -243,6 +243,74 @@ class AtmosEnergyApiClient:
         await self._verify_content(content)
             
         return await self._parse_xls_data(content)
+
+    async def get_monthly_usage(self) -> dict[str, Any]:
+        """Fetch and parse monthly usage data."""
+        await self.login()
+        
+        url = f"{self._base_url}/accountcenter/usagehistory/monthlyUsageDownload.html"
+        _LOGGER.debug("Fetching monthly usage data from %s", url)
+        
+        status, effective_url, content = await self._request_with_retry(
+            'get', 
+            url, 
+            headers={**self._common_headers, 'Referer': f"{self._base_url}/accountcenter/usagehistory/usagehistory.html"}
+        )
+        await self._verify_response_headers(status, effective_url)
+        await self._verify_content(content)
+            
+        return await self._parse_monthly_xls_data(content)
+
+    async def _parse_monthly_xls_data(self, content: bytes) -> dict[str, Any]:
+        """Parse monthly XLS data."""
+        await self._verify_content(content)
+
+        def _parse_impl():
+            import pandas as pd
+            from io import BytesIO
+            
+            stripped = content.strip()
+            
+            try:
+                try:
+                    df = pd.read_excel(BytesIO(stripped))
+                except Exception:
+                    df = pd.read_excel(BytesIO(stripped), engine='xlrd')
+            except Exception as e:
+                _LOGGER.error("Failed to parse monthly data: %s", e)
+                raise DataParseError(f"Format error: {e}") from e
+                
+            # Normalize column names
+            df.columns = [str(c).lower().strip() for c in df.columns]
+            
+            if 'consumption' not in df.columns:
+                raise DataParseError(f"Missing 'consumption' column in monthly data. Found: {list(df.columns)}")
+            
+            # Find charge date column
+            charge_date_col = next((col for col in df.columns if 'charge date' in col), None)
+            if not charge_date_col:
+                raise DataParseError(f"Missing 'charge date' column in monthly data. Found: {list(df.columns)}")
+
+            # Convert charge date to datetime and sort
+            df[charge_date_col] = pd.to_datetime(df[charge_date_col], errors='coerce')
+            df = df.dropna(subset=[charge_date_col])
+            df = df.sort_values(by=charge_date_col, ascending=True)
+
+            if df.empty:
+                return {}
+
+            latest_row = df.iloc[-1]
+            
+            return {
+                "usage": float(latest_row['consumption']),
+                "charge_date": str(latest_row[charge_date_col]),
+                "meter_read_date": str(latest_row.get('meter read date', '')),
+                "avg_temp": float(latest_row.get('avg temp', 0.0)) if pd.notnull(latest_row.get('avg temp')) else None,
+                "billing_month": str(latest_row.get('billing month', '')),
+            }
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _parse_impl)
         
     async def _parse_xls_data(self, content: bytes) -> dict[str, Any]:
         """Parse the binary XLS content using pandas."""
@@ -295,16 +363,25 @@ class AtmosEnergyApiClient:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _parse_impl)
 
-    async def get_account_data(self) -> dict[str, Any]:
+    async def get_account_data(self, daily_usage: bool = True) -> dict[str, Any]:
         """Fetch account data including usage."""
-        usage_data = await self.get_daily_usage()
+        if daily_usage:
+            usage_data = await self.get_daily_usage()
+            return {
+                "bill_date": usage_data.get("latest_date"),
+                "billing_period_start": usage_data.get("billing_period_start"),
+                "due_date": "Unknown",
+                "amount_due": None,
+                "usage": usage_data.get("total_usage", 0.0),
+            }
         
+        usage_data = await self.get_monthly_usage()
         return {
-            "bill_date": usage_data.get("latest_date"),
-            "billing_period_start": usage_data.get("billing_period_start"),
-            "due_date": "Unknown",
-            "amount_due": None,
-            "usage": usage_data.get("total_usage", 0.0),
+            "bill_date": usage_data.get("charge_date"),
+            "meter_read_date": usage_data.get("meter_read_date"),
+            "avg_temp": usage_data.get("avg_temp"),
+            "billing_month": usage_data.get("billing_month"),
+            "usage": usage_data.get("usage", 0.0),
         }
         
     async def close(self) -> None:

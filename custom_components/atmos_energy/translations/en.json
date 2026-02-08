@@ -6,7 +6,8 @@
                 "description": "Enter your Atmos Energy account credentials",
                 "data": {
                     "username": "Username",
-                    "password": "Password"
+                    "password": "Password",
+                    "daily_usage": "My account provides daily usage data (Current Billing Period)"
                 }
             },
             "cost": {

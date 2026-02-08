@@ -9,6 +9,7 @@ CONF_FIXED_COST = "fixed_cost"
 CONF_USAGE_RATE = "usage_rate" # $/CCF
 CONF_TAX_PERCENT = "tax_percent"
 CONF_WEATHER_ENTITY = "weather_entity"
+CONF_DAILY_USAGE = "daily_usage"
 
 # Defaults
 DEFAULT_NAME = "Atmos Energy"
@@ -26,3 +27,6 @@ ATTR_DUE_DATE = "due_date"
 ATTR_AMOUNT_DUE = "amount_due"
 ATTR_USAGE = "usage"
 ATTR_DAYS_REMAINING = "days_remaining"
+ATTR_METER_READ_DATE = "meter_read_date"
+ATTR_AVG_TEMP = "avg_temp"
+ATTR_BILLING_MONTH = "billing_month"
