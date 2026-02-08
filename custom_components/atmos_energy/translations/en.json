@@ -1,40 +1,54 @@
 {
     "config": {
-        "flow_title": "{name}",
         "step": {
             "user": {
-                "title": "Connect to Atmos Energy",
-                "description": "Please enter your Atmos Energy credentials to retrieve your usage data.",
+                "title": "Atmos Energy",
+                "description": "Enter your Atmos Energy account credentials",
                 "data": {
                     "username": "Username",
                     "password": "Password"
-                },
-                "data_description": {
-                    "username": "Your Atmos Energy account email or username",
-                    "password": "Your Atmos Energy account password"
+                }
+            },
+            "cost": {
+                "title": "Cost & Prediction Configuration",
+                "description": "Configure rates and weather source for usage prediction. Note: The Gas usage sensor tracks usage for the current billing period.",
+                "data": {
+                    "fixed_cost": "Fixed Monthly Cost ($)",
+                    "usage_rate": "Usage Rate ($/CCF)",
+                    "tax_percent": "Tax Percentage (%)",
+                    "weather_entity": "Weather Entity for Predicted Usage/Cost (Optional)"
+                }
+            },
+            "reauth": {
+                "title": "Reauthenticate Atmos Energy",
+                "description": "The credentials for {username} are no longer valid.",
+                "data": {
+                    "password": "Password"
                 }
             }
         },
         "error": {
-            "auth_error": "Authentication failed. Please check your username and password.",
-            "cannot_connect": "Failed to connect to Atmos Energy.",
-            "unknown": "Unexpected error."
+            "invalid_auth": "Invalid username or password",
+            "cannot_connect": "Cannot connect to Atmos Energy",
+            "unknown": "Unexpected error occurred"
         },
         "abort": {
-            "already_configured": "This account is already configured."
+            "already_configured": "Account already configured",
+            "reauth_successful": "Reauthentication successful"
         }
     },
     "options": {
         "step": {
             "init": {
-                "title": "Cost Configuration",
-                "description": "Configure rates to estimate your bill. You can find these values on your physical bill.",
+                "title": "Atmos Energy Options",
+                "description": "Configure credentials, rates, and prediction settings.",
                 "data": {
+                    "username": "Username",
+                    "password": "Password",
                     "fixed_cost": "Fixed Monthly Cost ($)",
                     "usage_rate": "Usage Rate ($/CCF)",
-                    "tax_percent": "Tax Rate (%)",
-                    "daily_sensor": "Create Daily Usage Sensor",
-                    "monthly_sensor": "Create Monthly Usage Sensor"
+                    "tax_percent": "Tax Percentage (%)",
+                    "weather_entity": "Weather Entity for Predicted Usage/Cost (Optional)"
                 }
             }
         }

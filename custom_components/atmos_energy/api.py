@@ -15,27 +15,32 @@ _LOGGER = logging.getLogger(__name__)
 class AtmosEnergyApiClient:
     """API Client for Atmos Energy."""
 
-    def __init__(self, username, password, session=None):
+    def __init__(
+        self, 
+        username: str, 
+        password: str, 
+        session: aiohttp.ClientSession | None = None
+    ) -> None:
         """Initialize the API client."""
         self._username = username
         self._password = password
         self._session = session
         self._base_url = "https://www.atmosenergy.com"
         self._last_request: datetime | None = None
-        self._min_request_interval = timedelta(minutes=5)
+        self._min_request_interval = timedelta(seconds=2)
         self._common_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         }
 
-    async def _get_session(self):
+    async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create the aiohttp session."""
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=TIMEOUT, connect=10)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
-    async def _rate_limit(self):
+    async def _rate_limit(self) -> None:
         """Enforce rate limiting to avoid getting blocked."""
         now = datetime.now()
         if self._last_request:
@@ -46,28 +51,40 @@ class AtmosEnergyApiClient:
                 await asyncio.sleep(wait_time)
         self._last_request = now
 
-    async def _request_with_retry(self, method_name: str, url: str, max_retries: int = 3, **kwargs) -> aiohttp.ClientResponse:
-        """Make HTTP request with exponential backoff retry."""
+    async def _request_with_retry(
+        self, 
+        method_name: str, 
+        url: str, 
+        max_retries: int = 3, 
+        **kwargs
+    ) -> tuple[int, str, bytes]:
+        """Make HTTP request with exponential backoff retry.
+        
+        Returns:
+            tuple: (status, effective_url, content)
+        """
         session = await self._get_session()
         method = getattr(session, method_name)
         
         for attempt in range(max_retries):
             try:
-                # We don't use 'async with' here because we want to return the response object 
-                # (Caller's responsibility to read and close if they don't use 'async with' context)
-                response = await method(url, **kwargs)
-                
-                if response.status in (200, 302):
-                    return response
-                
-                # Server side errors - likely transient
-                if response.status in (500, 502, 503, 504):
-                    if attempt == max_retries - 1:
-                        raise APIError(f"Server error {response.status} after {max_retries} attempts")
-                else:
-                    # Client side errors - unlikely to resolve by retrying
-                    raise APIError(f"Request failed with status {response.status}")
+                await self._rate_limit()
+                async with method(url, **kwargs) as response:
+                    status = response.status
+                    effective_url = str(response.url)
+                    content = await response.read()
                     
+                    if status in (200, 302):
+                        return status, effective_url, content
+                    
+                    # Server side errors - likely transient
+                    if status in (500, 502, 503, 504):
+                        if attempt == max_retries - 1:
+                            raise APIError(f"Server error {status} after {max_retries} attempts")
+                    else:
+                        # Client side errors - unlikely to resolve by retrying
+                        raise APIError(f"Request failed with status {status}")
+                        
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 if attempt == max_retries - 1:
                     raise APIError(f"Request failed after {max_retries} attempts: {e}") from e
@@ -79,127 +96,157 @@ class AtmosEnergyApiClient:
         
         raise APIError(f"Request to {url} failed after {max_retries} retries")
 
-    async def check_session(self):
+    async def check_session(self) -> bool:
         """Check if current session is valid by hitting a protected endpoint."""
-        if self._session is None:
-            return False
-            
         url = f"{self._base_url}/accountcenter/usagehistory/UsageHistoryLanding.html"
         try:
-            # allow_redirects=False lets us catch the 302 to login
-            async with self._session.get(url, timeout=10, allow_redirects=False) as response:
-                if response.status == 302:
-                    location = response.headers.get("Location", "")
-                    if "login" in location.lower():
-                        return False
-                return response.status == 200
-        except Exception:
+            # Use small timeout for check
+            async with asyncio.timeout(10):
+                status, effective_url, content = await self._request_with_retry(
+                    'get', 
+                    url, 
+                    headers=self._common_headers,
+                    allow_redirects=True # Allow following internal redirects if any
+                )
+                await self._verify_response_headers(status, effective_url)
+                await self._verify_content(content)
+                return True
+        except (AuthenticationError, APIError):
+            return False
+        except Exception as e:
+            _LOGGER.debug("Session check failed: %s", e)
             return False
 
-    async def login(self):
-        """Login to Atmos Energy."""
-        if await self.check_session():
-            _LOGGER.debug("Session is still valid, skipping login.")
+    async def _verify_response_headers(self, status: int, url: str, allow_login: bool = False) -> None:
+        """Check response URL for authentication/error redirects."""
+        lower_url = url.lower()
+        
+        if not allow_login and ("login.html" in lower_url or "authenticate.html" in lower_url):
+            _LOGGER.warning("Detected redirect to login page: %s", url)
+            raise AuthenticationError("Session expired or redirected to login")
+
+        if "successerrormessage.html" in lower_url:
+            _LOGGER.warning("Detected redirect to portal error page: %s", url)
+            raise APIError("Atmos Energy portal returned an error page")
+
+    async def _verify_content(self, content: bytes) -> None:
+        """Check content for unexpected HTML or error messages."""
+        if not content:
             return
-
-    async def _verify_response(self, response: aiohttp.ClientResponse | None, content: bytes | None = None):
-        """Verify the response for sanity, redirects, and portal errors."""
-        # 1. URL and Redirect Checks (requires response object)
-        if response:
-            final_url = str(response.url).lower()
-            if "login.html" in final_url or "authenticate.html" in final_url:
-                _LOGGER.warning("Detected redirect to login page: %s", final_url)
-                raise AuthenticationError("Session expired or redirected to login")
-
-            if "successerrormessage.html" in final_url:
-                _LOGGER.warning("Detected redirect to portal error page: %s", final_url)
-                raise APIError("Atmos Energy portal returned an error page (successErrorMessage.html)")
-
-        # 2. Content Checks (HTML detection and error strings)
-        if content and (content.startswith(b"<!DOCTYP") or content.startswith(b"<html")):
-            html_text = content[:2000].decode('utf-8', errors='replace').lower()
             
-            # Login Indicators
-            if any(ind in html_text for ind in ["login", "username", "password", "authenticate", "logon"]):
-                _LOGGER.warning("Received HTML appears to be a login page.")
-                raise AuthenticationError("Portal returned a login page instead of the expected data")
-            
-            # Error Indicators
-            errors = ["access denied", "session expired", "not authorized", "temporary problem"]
-            found_error = next((err for err in errors if err in html_text), None)
-            if found_error:
-                _LOGGER.warning("Received HTML appears to be an error page: %s", html_text[:200])
-                raise APIError(f"Atmos Energy portal returned an error: {found_error}")
+        # Strip leading whitespace for initial check
+        stripped_content = content.lstrip()
+        if stripped_content.startswith((b"<!DOCTYP", b"<html", b"<HTML")):
+            try:
+                html_text = stripped_content[:10000].decode('utf-8', errors='replace').lower()
+            except Exception:
+                return
 
-    async def _get_form_tokens(self, url: str) -> dict[str, str]:
-        """Scrape form tokens (like formId) from a page."""
-        async with await self._request_with_retry('get', url, headers=self._common_headers) as resp:
-            text = await resp.text()
+            # Login Indicators - focus on actual form elements and very specific login text
+            indicators = [
+                'type="password"', 
+                'name="username"', 
+                'name="password"',
+                'name="j_username"',
+                'name="j_password"',
+                "sign in to your account",
+                "sign in to the account center",
+                "<h1>login</h1>"
+            ]
+            for ind in indicators:
+                if ind in html_text:
+                    _LOGGER.warning("Found login indicator '%s' in HTML response", ind)
+                    raise AuthenticationError(f"Portal returned a login page instead of expected data (matched: {ind})")
             
-        soup = BeautifulSoup(text, 'html.parser')
+            # Error and Session Indicators - these describe failures or state changes
+            errors = [
+                "access denied", 
+                "session expired", 
+                "not authorized", 
+                "temporary problem",
+                "session ended",
+                "extended inactivity",
+                "security measure",
+                "invalid username",
+                "invalid password",
+                "login failed",
+                "authentication failed"
+            ]
+            for err in errors:
+                if err in html_text:
+                    _LOGGER.warning("Found session error indicator '%s' in HTML response", err)
+                    raise AuthenticationError(f"Atmos Energy portal returned an error or session-ended: {err}")
+
+    async def _get_form_tokens(self, content: bytes) -> dict[str, str]:
+        """Extract hidden form tokens from HTML."""
+        soup = BeautifulSoup(content, 'html.parser')
         tokens = {}
         for input_tag in soup.find_all('input', {'name': True, 'value': True}):
             tokens[input_tag['name']] = input_tag['value']
         return tokens
 
-    async def login(self):
+    async def login(self) -> None:
         """Login to Atmos Energy and initialize the usage session."""
         if await self.check_session():
             _LOGGER.debug("Session is still valid, skipping login.")
             return
 
-        # 1. Get login form tokens
+        _LOGGER.debug("Logging in user: %s***", self._username[:3])
+        
+        # 1. Get LogOn page and tokens
         login_url = f"{self._base_url}/accountcenter/logon/login.html"
-        tokens = await self._get_form_tokens(login_url)
+        status, effective_url, content = await self._request_with_retry('get', login_url, headers=self._common_headers)
+        await self._verify_response_headers(status, effective_url, allow_login=True)
         
-        # 2. Perform Authentication POST
-        auth_url = f"{self._base_url}/accountcenter/logon/authenticate.html"
-        payload = {
-            "formId": tokens.get("formId", ""),
-            "username": self._username,
-            "password": self._password,
-            "button.Login": "Login"
-        }
-        
-        headers = {**self._common_headers, 'Referer': login_url, 'Content-Type': 'application/x-www-form-urlencoded'}
-        _LOGGER.debug("Attempting login for user: %s***", self._username[:3])
-        
-        async with await self._request_with_retry('post', auth_url, data=payload, headers=headers, allow_redirects=True) as resp:
-            await self._verify_response(resp)
+        tokens = await self._get_form_tokens(content)
+        tokens.update({
+            'username': self._username,
+            'password': self._password,
+            'button.Login': 'Login'
+        })
 
-        # 3. LANDING: Visit the Usage Landing page to "activate" the session for downloads
-        _LOGGER.debug("Initializing usage session...")
+        # 2. Submit Login
+        auth_url = f"{self._base_url}/accountcenter/logon/authenticate.html"
+        _LOGGER.debug("Attempting authentication...")
+        status, effective_url, content = await self._request_with_retry(
+            'post', 
+            auth_url, 
+            data=tokens, 
+            headers={**self._common_headers, 'Referer': login_url}
+        )
+        await self._verify_response_headers(status, effective_url, allow_login=True)
+        await self._verify_content(content)
+
+        # 3. Visit Landing Page to activate session
         landing_url = f"{self._base_url}/accountcenter/usagehistory/UsageHistoryLanding.html"
-        headers['Referer'] = auth_url
-        async with await self._request_with_retry('get', landing_url, headers=headers) as resp:
-            await self._verify_response(resp)
-            
+        _LOGGER.debug("Initializing usage session...")
+        status, effective_url, content = await self._request_with_retry('get', landing_url, headers=self._common_headers)
+        await self._verify_response_headers(status, effective_url)
+        await self._verify_content(content)
+
         _LOGGER.debug("Login and session initialization successful")
 
-    async def get_daily_usage(self):
+    async def get_daily_usage(self) -> dict[str, Any]:
         """Fetch and parse daily usage data."""
-        await self._rate_limit()
         await self.login()
         
         url = f"{self._base_url}/accountcenter/usagehistory/dailyUsageDownload.html"
-        headers = {
-            **self._common_headers,
-            'Referer': f"{self._base_url}/accountcenter/usagehistory/dailyUsage.html",
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        }
+        _LOGGER.debug("Fetching usage data from %s", url)
         
-        async with await self._request_with_retry('get', url, params={"billingPeriod": "Current"}, headers=headers) as resp:
-            await self._verify_response(resp)
-            content = await resp.read()
-            # Double check content for hidden errors (e.g. HTML inside binary)
-            await self._verify_response(resp, content=content)
+        status, effective_url, content = await self._request_with_retry(
+            'get', 
+            url, 
+            params={"billingPeriod": "Current"},
+            headers={**self._common_headers, 'Referer': f"{self._base_url}/accountcenter/usagehistory/dailyUsage.html"}
+        )
+        await self._verify_response_headers(status, effective_url)
+        await self._verify_content(content)
             
         return await self._parse_xls_data(content)
         
     async def _parse_xls_data(self, content: bytes) -> dict[str, Any]:
         """Parse the binary XLS content using pandas."""
-        # Safety check: Verify content for errors/login pages
-        await self._verify_response(None, content=content)
+        await self._verify_content(content)
 
         def _parse_impl():
             import pandas as pd
@@ -207,22 +254,12 @@ class AtmosEnergyApiClient:
             
             stripped = content.strip()
             
-            # Robust Format Detection
-            is_html = stripped.startswith((b"<!DOCTYP", b"<html"))
-            
             try:
-                if is_html:
-                    # Attempt HTML table parsing
-                    dfs = pd.read_html(BytesIO(stripped))
-                    if not dfs:
-                        raise DataParseError("HTML received but no tables found")
-                    df = dfs[0]
-                else:
-                    # Standard Excel parsing (with fallback to xlrd for old formats)
-                    try:
-                        df = pd.read_excel(BytesIO(stripped))
-                    except Exception:
-                        df = pd.read_excel(BytesIO(stripped), engine='xlrd')
+                # Standard Excel parsing (with fallback to xlrd for old formats)
+                try:
+                    df = pd.read_excel(BytesIO(stripped))
+                except Exception:
+                    df = pd.read_excel(BytesIO(stripped), engine='xlrd')
             except Exception as e:
                 _LOGGER.error("Failed to parse data (first 50 bytes: %s): %s", stripped[:50].hex(' '), e)
                 raise DataParseError(f"Format error: {e}") from e
@@ -233,34 +270,28 @@ class AtmosEnergyApiClient:
             if 'consumption' not in df.columns:
                 raise DataParseError(f"Missing 'consumption' column. Found: {list(df.columns)}")
             
-            # Find date column (could be 'weather date', 'reading date', etc.)
+            # Find date column
             date_col = next((col for col in df.columns if 'date' in col), None)
             
-            # Clean consumption data (convert to numeric, drop NaNs)
+            # Clean consumption data
             df['consumption'] = pd.to_numeric(df['consumption'], errors='coerce')
             df = df.dropna(subset=['consumption'])
             
             total_usage = float(df['consumption'].sum())
             latest_usage = float(df['consumption'].iloc[-1]) if not df.empty else 0.0
             latest_date = None
+            first_date = None
             if date_col and not df.empty:
-                # Convert date to string format for HA
-                latest_date_raw = df[date_col].iloc[-1]
-                latest_date = str(latest_date_raw)
-                first_date_raw = df[date_col].iloc[0]
-                first_date = str(first_date_raw)
-            else:
-                first_date = None
+                latest_date = str(df[date_col].iloc[-1])
+                first_date = str(df[date_col].iloc[0])
                     
             return {
                 "total_usage": total_usage,
                 "latest_usage": latest_usage,
                 "latest_date": latest_date,
                 "billing_period_start": first_date,
-                "period": "Current"
             }
 
-        import asyncio
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _parse_impl)
 
@@ -270,15 +301,15 @@ class AtmosEnergyApiClient:
         
         return {
             "bill_date": usage_data.get("latest_date"),
+            "billing_period_start": usage_data.get("billing_period_start"),
             "due_date": "Unknown",
             "amount_due": None,
             "usage": usage_data.get("total_usage", 0.0),
-            "daily_usage": usage_data.get("latest_usage", 0.0)
         }
         
-    async def close(self):
+    async def close(self) -> None:
         """Close the session."""
-        if self._session:
+        if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
 

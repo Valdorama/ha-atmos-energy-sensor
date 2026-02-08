@@ -1,0 +1,256 @@
+
+
+
+
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+ 
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' *.inmoment.com *.googleapis.com *.google-analytics.com *.sundaysky.com *.googletagmanager.com 'unsafe-eval' 'nonce-tpnSZz6uNB0ac07BqzgYi3G4'; worker-src blob:" >
+
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script nonce="tpnSZz6uNB0ac07BqzgYi3G4" async src="https://www.googletagmanager.com/gtag/js?id=G-V1S41CKLXY"></script>
+<script type="text/javascript" nonce="tpnSZz6uNB0ac07BqzgYi3G4">
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-V1S41CKLXY');
+</script>
+
+<script type="text/javascript" nonce="tpnSZz6uNB0ac07BqzgYi3G4">
+(function(document,navigator,standalone) {
+	if ((standalone in navigator) && navigator[standalone]) {
+		var curnode, location=document.location, stop=/^(a|html)$/i;
+		document.addEventListener('click', function(e) {
+			curnode=e.target;
+			while (!(stop).test(curnode.nodeName)) {
+				curnode=curnode.parentNode;
+			}
+			if(
+				('href' in curnode) && 			
+				(!(/^[a-z\+\.\-]+:/i).test((chref=curnode.href).replace(location.href,'')) ||  
+						chref.indexOf(location.protocol+'//'+location.host)===0 )								
+			) {
+				e.preventDefault();
+				location.href = curnode.href;
+			}
+		},false);
+	}
+})(document,window.navigator,'standalone');
+</script>
+
+<title>Atmos Energy Account Center</title>
+<link rel="shortcut icon" href="../images/atmos.ico" type="image/x-icon" />
+
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+
+<script type="text/javascript" src="../js/jquery-3.5.1.min.js"></script>
+<script type="text/javascript" src="../js/jquery-ui-1.13.3.min.js"></script>
+<link rel="stylesheet" href="../css3/jquery-ui-1.13.3.css">
+
+<script type="text/javascript" src="../js/jquery.autotab-1.1b.js"></script>
+<script type="text/javascript" src="../js/jquery.idle-timer.js"></script>
+<script type="text/javascript" src="../js/customizedJs.js" ></script>
+
+<script type="text/javascript" src="../js/jquery.matchHeight.js"></script>
+<script type="text/javascript" src="../js/jquery.placeholder.min.js"></script>
+<script type="text/javascript" src="../js/jquery-accordion-menu.js"></script>
+<script type="text/javascript" src="../js/accountcenter.js"></script>
+
+<link rel="stylesheet" href="../css3/accountcenter.css">
+<link rel="stylesheet" type="text/css" href="../css3/responsive.css" media="screen" />
+
+
+	
+
+
+<script type="text/javascript"  nonce="tpnSZz6uNB0ac07BqzgYi3G4">
+
+	(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+	  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+	  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+	  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+	  ga('create', 'UA-33558441-3', 'auto');
+	  ga('send', 'pageview');
+	  
+</script>
+<style type="text/css">
+	div.emergencyMessage{
+	   margin-top: -8ex;
+	   margin-left: 4ex;
+       margin-right: 2ex;
+       margin-bottom: -2ex;
+       line-height: 1.3;
+       color: #dc143c;
+	}
+ @media screen and (max-width: 768px) {
+	 div.emergencyMessage{
+	     margin-top: 2ex;
+	     margin-left: 4ex;
+         margin-right: 2ex;
+         margin-bottom: -2ex;
+	     line-height: 1.3;
+         color: #dc143c;
+	 }
+}
+
+</style>
+</head>
+<body class="size-1140">
+  <div id="outerWrap">
+  
+
+  <header class="noauth">
+    <div class="line logoBar">
+      <div class="margin">
+        <div class="logo s-4 m-4 l-3">
+          <img src="../img/Atmos-Energy-Account-Center.png">
+        </div>
+        <div class="s-8 m-8 l-9">
+        
+        
+        <ul class="actions">
+           
+	       
+	           
+	           <li class="chgcctBtn"><a href="/accountcenter/logon/login.html?request_locale=es_MX" class="ftHeavy" title="Spanish">Español</a></li>
+	                       
+        </ul>
+        </div>
+      </div>
+    </div>
+  </header>
+  
+  <div id="bodyWrap">
+    <section id="acFunctions" class="noauth">
+    <div class="acWrap noline">
+      <div class="line acInner">
+        <div class="margin">
+          <!-- Left Column -->
+          <div class="s-12 m-12 l-12 account-col colHeight" id="account-col"> 
+  
+          <div id="main">
+             
+             
+                  <h1>Error</h1>
+               
+               
+             <div class="box">
+             
+              <p class="extender">
+              
+                As a security measure, we ended your Account Center session after extended inactivity. This helps to protect your personal Atmos Energy Account information. When you are ready to access your account information, simply log in again. &nbsp;       
+                
+               
+                  
+                  <a href="/accountcenter/logon/login.html">Login</a>
+                
+                
+                                
+                  
+                
+                </p>      
+             </div>
+                
+           </div>                 
+        </div>
+        </div>
+      </div>
+      </div>
+    </section> 
+
+   </div>        
+   
+     
+
+ <!-- Footer with legal and contact information -->
+ <footer class="ftBook">
+   
+      <div class="line">
+        <div class="margin">
+          <div class="s-12 m-12 l-6">
+
+            <div class="footerLeft">
+                    
+        <ul class="horzList pipes legalLinks hide-s hide-m">
+           
+	       
+	           
+	           <li class="chgcctBtn"><a href="/accountcenter/logon/login.html?request_locale=es_MX" class="ftHeavy" title="Spanish">Español</a></li>
+	                       
+        </ul>
+              <div class="returnLink">
+                <a href="http://www.atmosenergy.com" title="Return to atmosenergy.com">Return to <strong class="ftHeavy">atmosenergy.com</strong></a>
+              </div>
+              <!-- legal: desktop view  -->
+              <ul class="horzList pipes legalLinks hide-s hide-m">
+                <li><a href="https://www.atmosenergy.com/privacy-policy">Privacy Policy</a> 
+		        </li>
+                <li><a href="https://www.atmosenergy.com/legal-statement">Legal Statement</a>
+ 		        </li>
+              </ul>
+              <!-- DEVNOTE: This grouping of Legal text & links is for large screens -->
+              <div class="legalTxt hide-s hide-m">
+                <div>Atmos Energy is engaged in regulated utility operations.</div>
+                <div>&copy; 2026 Atmos Energy Corporation. All Rights Reserved.</div>
+              </div>
+            </div>
+
+          </div>
+          <div class="s-12 m-12 l-6">
+            <div class="footerRight">
+              <div class="contactLink ftHeavy">
+                Contact Us
+              </div>
+              <div class="contactWrap">
+                <div class="contact">
+                  <div class="label">Emergency Contact</div>
+                  <div class="num ftBold"><a href="tel:8663228667">866.322.8667</a> and 911</div>
+                </div>
+                <div class="contact">
+                  <div class="label">Customer Service</div>
+                  <div class="num ftBold"><a href="tel:8882866700">888.286.6700</a></div>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <div class="bottomBar">
+        <div class="line hide-l">
+          <div class="margin">
+            <div class="s-12 m-12 l-12">
+              <ul class="horzList pipes legalLinks">
+                <li><a href="https://www.atmosenergy.com/privacy-policy">Privacy Policy</a> 
+		        </li>
+                <li><a href="https://www.atmosenergy.com/legal-statement">Legal Statement</a>
+ 		        </li>
+              </ul>
+
+              <div class="legalTxt hide-l">
+                <div>Atmos Energy is engaged in regulated utility operations.</div>
+                <div>&copy; 2026 Atmos Energy Corporation. All Rights Reserved.</div>
+            </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      
+ </footer>
+    
+     
+   </div>
+</body>
+</html>

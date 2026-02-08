@@ -1,6 +1,8 @@
 """DataUpdateCoordinator for Atmos Energy."""
 import logging
+from typing import Any
 import aiohttp
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.core import HomeAssistant
 
@@ -13,9 +15,10 @@ _LOGGER = logging.getLogger(__name__)
 class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Atmos Energy data."""
 
-    def __init__(self, hass: HomeAssistant, client: AtmosEnergyApiClient):
+    def __init__(self, hass: HomeAssistant, client: AtmosEnergyApiClient, entry: ConfigEntry):
         """Initialize."""
         self.client = client
+        self.config_entry = entry
         super().__init__(
             hass,
             _LOGGER,
@@ -23,7 +26,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=SCAN_INTERVAL,
         )
 
-    async def _async_update_data(self):
+    async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
         try:
             data = await self.client.get_account_data()
@@ -34,15 +37,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 if usage < 0:
                     _LOGGER.warning("Negative usage value received: %s. Setting to 0", usage)
                     data["usage"] = 0.0
-                elif usage > 5000: # Sanity check: 5000 CCF is a massive amount of gas
+                elif usage > 10000: # Relaxed sanity check (10,000 CCF)
                     _LOGGER.warning("Unusually high gas usage detected: %s CCF", usage)
-            
-            daily_usage = data.get("daily_usage")
-            if daily_usage is not None:
-                if daily_usage < 0:
-                    data["daily_usage"] = 0.0
-                elif daily_usage > 500: # Sanity check for a single day
-                    _LOGGER.warning("Unusually high daily gas usage detected: %s CCF", daily_usage)
             
             return data
             

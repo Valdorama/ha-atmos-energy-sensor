@@ -9,6 +9,16 @@
                     "password": "Password"
                 }
             },
+            "cost": {
+                "title": "Cost & Prediction Configuration",
+                "description": "Configure rates and weather source for usage prediction. Note: The Gas usage sensor tracks usage for the current billing period.",
+                "data": {
+                    "fixed_cost": "Fixed Monthly Cost ($)",
+                    "usage_rate": "Usage Rate ($/CCF)",
+                    "tax_percent": "Tax Percentage (%)",
+                    "weather_entity": "Weather Entity for Predicted Usage/Cost (Optional)"
+                }
+            },
             "reauth": {
                 "title": "Reauthenticate Atmos Energy",
                 "description": "The credentials for {username} are no longer valid.",
@@ -31,13 +41,14 @@
         "step": {
             "init": {
                 "title": "Atmos Energy Options",
-                "description": "Configure rate calculation",
+                "description": "Configure credentials, rates, and prediction settings.",
                 "data": {
+                    "username": "Username",
+                    "password": "Password",
                     "fixed_cost": "Fixed Monthly Cost ($)",
                     "usage_rate": "Usage Rate ($/CCF)",
                     "tax_percent": "Tax Percentage (%)",
-                    "daily_sensor": "Create Daily Usage Sensor",
-                    "monthly_sensor": "Create Monthly Usage Sensor"
+                    "weather_entity": "Weather Entity for Predicted Usage/Cost (Optional)"
                 }
             }
         }
