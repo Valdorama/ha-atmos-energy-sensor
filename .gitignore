@@ -37,3 +37,6 @@ ENV/
 *.log
 *.xls
 *.html
+
+chats/
+tests/data/
