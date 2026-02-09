@@ -20,7 +20,9 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 ### 3. Core Logic Patterns
 - **Centralized Verification**: Use the `_verify_response` method in `AtmosEnergyApiClient` to handle all URL redirects, HTML detection, and portal error messages.
 - **Session Lifecycle**: Remember that Atmos Energy requires a multi-hop login flow (Form -> POST -> Landing Page) to properly initialize the session for file downloads.
-- **Robust Parsing**: Always use `content.strip()` before parsing XLS data to handle leading whitespace bugs. maintain the HTML table fallback for mislabeled files.
+- **Data Granularity**: Support both daily (`dailyUsageDownload.html`) and monthly (`monthlyUsageDownload.html`) data sources. Check the `daily_usage` config option before selecting the API method.
+- **Robust Parsing**: Always use `content.strip()` before parsing XLS data to handle leading whitespace bugs. Maintain the HTML table fallback for mislabeled files.
+- **Measurement vs Total**: Sensors using `state_class: measurement` (like the monthly usage sensor) should have `device_class: None` to avoid Home Assistant validation errors with gas units.
 
 ### 4. Home Assistant Integration Standards
 - **Device Support**: The integration should be classified as a `hub` or `device`. Entities should be associated with the device using `has_entity_name = True`.

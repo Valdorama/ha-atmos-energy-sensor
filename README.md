@@ -10,10 +10,11 @@ A custom component for Home Assistant to retrieve usage data from [Atmos Energy]
 **Disclaimer**: This is an unofficial integration and is not affiliated with Atmos Energy. It scrapes the website to retrieve data, so changes to the Atmos Energy website may break this integration.
 
 ## Features
-- **Gas usage (Current Billing Period)**: Retrieves total usage for the current billing period in CCF.
-- **Estimated cost**: Calculates an estimated cost for the current billing period based on your specific rates and tax.
-- **Days remaining in billing period**: Tracks how many days are left in your current billing cycle based on the usage history.
-- **Predicted Gas Usage/Cost (Next 7 Days)**: Uses weather forecasts and a Heating Degree Day (HDD) algorithm to estimate your usage and cost for the upcoming week.
+- **Gas usage (Current Billing Period)**: Retrieves total usage for the current billing period in CCF (for accounts with daily data).
+- **Gas Usage (Previous Billing Period)**: Retrieves the usage from the most recent completed billing cycle (for accounts without daily data).
+- **Estimated cost**: Calculates an estimated cost for the current billing period (daily accounts only).
+- **Days remaining in billing period**: Tracks how many days are left in your current billing cycle (daily accounts only).
+- **Predicted Gas Usage/Cost (Next 7 Days)**: Uses weather forecasts and a Heating Degree Day (HDD) algorithm to estimate your upcoming usage (daily accounts only).
 - Reports the latest date for which usage data is available.
 - (Planned) Bill amount and due date.
 
@@ -37,7 +38,8 @@ A custom component for Home Assistant to retrieve usage data from [Atmos Energy]
 2. Click **Add Integration**.
 3. Search for **Atmos Energy**.
 4. Enter your Atmos Energy **Username** and **Password**.
-5. On the next screen, configure your **Rates and Weather Entity** (see Options below for details).
+5. Select whether your account provides **daily usage data**. (Note: If your account only provides monthly data, uncheck this box to avoid configuration errors).
+6. If daily usage is enabled, configure your **Rates and Weather Entity** on the next screen.
 
 ## Configuration Options
 To update your credentials or improve the accuracy of the estimated cost sensor, you can adjust the integration options:
