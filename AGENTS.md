@@ -10,6 +10,7 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 
 ### 2. Versioning & Releases
 - **Semantic Versioning**: Use the `v0.x.x` format.
+- **Version Sync (CRITICAL)**: Before creating a git tag, the `version` in `custom_components/atmos_energy/manifest.json` **MUST** be updated to match the target tag version. This ensures the integration reflects the correct version within Home Assistant.
 - **Manifest Sync**: Ensure the `version` in `custom_components/atmos_energy/manifest.json` is bumped and synchronized with git tags.
 - **Release Summaries**: When creating a new release (tagping and pushing), always provide a **Release Summary in Markdown format** as the final step. This summary should be easy to copy/paste and highlight:
     - New Features & Enhancements
