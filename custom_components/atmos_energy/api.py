@@ -19,12 +19,14 @@ class AtmosEnergyApiClient:
         self, 
         username: str, 
         password: str, 
-        session: aiohttp.ClientSession | None = None
+        session: aiohttp.ClientSession | None = None,
+        source: str = "api"
     ) -> None:
         """Initialize the API client."""
         self._username = username
         self._password = password
         self._session = session
+        self._source = source
         self._base_url = "https://www.atmosenergy.com"
         self._last_request: datetime | None = None
         self._min_request_interval = timedelta(seconds=2)
@@ -188,10 +190,10 @@ class AtmosEnergyApiClient:
     async def login(self) -> None:
         """Login to Atmos Energy and initialize the usage session."""
         if await self.check_session():
-            _LOGGER.debug("Session is still valid, skipping login.")
+            _LOGGER.debug("[%s] Session is still valid, skipping login.", self._source)
             return
 
-        _LOGGER.debug("Logging in user: %s***", self._username[:3])
+        _LOGGER.debug("[%s] Logging in user: %s***", self._source, self._username[:3])
         
         # 1. Get LogOn page and tokens
         login_url = f"{self._base_url}/accountcenter/logon/login.html"
@@ -207,7 +209,7 @@ class AtmosEnergyApiClient:
 
         # 2. Submit Login
         auth_url = f"{self._base_url}/accountcenter/logon/authenticate.html"
-        _LOGGER.debug("Attempting authentication...")
+        _LOGGER.debug("[%s] Attempting authentication...", self._source)
         status, effective_url, content = await self._request_with_retry(
             'post', 
             auth_url, 
@@ -219,12 +221,12 @@ class AtmosEnergyApiClient:
 
         # 3. Visit Landing Page to activate session
         landing_url = f"{self._base_url}/accountcenter/usagehistory/UsageHistoryLanding.html"
-        _LOGGER.debug("Initializing usage session...")
+        _LOGGER.debug("[%s] Initializing usage session...", self._source)
         status, effective_url, content = await self._request_with_retry('get', landing_url, headers=self._common_headers)
         await self._verify_response_headers(status, effective_url)
         await self._verify_content(content)
 
-        _LOGGER.debug("Login and session initialization successful")
+        _LOGGER.debug("[%s] Login and session initialization successful", self._source)
 
     async def get_daily_usage(self) -> dict[str, Any]:
         """Fetch and parse daily usage data."""
@@ -341,9 +343,27 @@ class AtmosEnergyApiClient:
             # Find date column
             date_col = next((col for col in df.columns if 'date' in col), None)
             
+            # Find temperature columns
+            avg_temp_col = next((col for col in df.columns if 'avg' in col and 'temp' in col), None)
+            
             # Clean consumption data
             df['consumption'] = pd.to_numeric(df['consumption'], errors='coerce')
             df = df.dropna(subset=['consumption'])
+            
+            # Extract history
+            history = []
+            if date_col:
+                # Ensure dates are strings for JSON serialization
+                # and numeric types are python floats (not numpy types)
+                for _, row in df.iterrows():
+                    record = {
+                        "date": str(row[date_col]),
+                        "usage": float(row['consumption']),
+                    }
+                    if avg_temp_col and pd.notnull(row[avg_temp_col]):
+                        record["avg_temp"] = float(row[avg_temp_col])
+                    
+                    history.append(record)
             
             total_usage = float(df['consumption'].sum())
             latest_usage = float(df['consumption'].iloc[-1]) if not df.empty else 0.0
@@ -358,6 +378,7 @@ class AtmosEnergyApiClient:
                 "latest_usage": latest_usage,
                 "latest_date": latest_date,
                 "billing_period_start": first_date,
+                "history": history
             }
 
         loop = asyncio.get_running_loop()
@@ -373,6 +394,7 @@ class AtmosEnergyApiClient:
                 "due_date": "Unknown",
                 "amount_due": None,
                 "usage": usage_data.get("total_usage", 0.0),
+                "history": usage_data.get("history", []),
             }
         
         usage_data = await self.get_monthly_usage()

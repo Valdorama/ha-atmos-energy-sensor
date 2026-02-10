@@ -38,5 +38,5 @@ ENV/
 *.xls
 *.html
 
-chats/
+chats/*.md
 tests/data/

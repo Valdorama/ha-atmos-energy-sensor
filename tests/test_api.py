@@ -28,7 +28,7 @@ from custom_components.atmos_energy.exceptions import DataParseError, Authentica
 class TestAtmosEnergyApi(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.session = MagicMock()
-        self.api = AtmosEnergyApiClient("test@example.com", "password", self.session)
+        self.api = AtmosEnergyApiClient("test@example.com", "password", self.session, source="test")
 
     async def test_parse_xls_real_file(self):
         """Test parsing the real usage.xls file provided by the user."""

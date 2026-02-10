@@ -25,7 +25,7 @@ from custom_components.atmos_energy.exceptions import DataParseError, Authentica
 class TestIssueReproduction(unittest.TestCase):
     def setUp(self):
         self.session = MagicMock()
-        self.api = AtmosEnergyApiClient("test@example.com", "password", self.session)
+        self.api = AtmosEnergyApiClient("test@example.com", "password", self.session, source="test")
 
     async def _mock_response(self, content, url, status=200):
         from unittest.mock import AsyncMock

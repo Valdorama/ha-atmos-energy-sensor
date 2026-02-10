@@ -20,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
 
-    client = AtmosEnergyApiClient(username, password)
+    client = AtmosEnergyApiClient(username, password, source="coordinator")
     coordinator = AtmosEnergyDataUpdateCoordinator(hass, client, entry)
 
     # Trigger first refresh in background to avoid blocking HA UI/startup

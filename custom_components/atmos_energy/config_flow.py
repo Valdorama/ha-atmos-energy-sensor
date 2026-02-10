@@ -42,7 +42,7 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             username = user_input[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
 
-            client = AtmosEnergyApiClient(username, password)
+            client = AtmosEnergyApiClient(username, password, source="setup")
             
             try:
                 await client.login()
@@ -112,7 +112,7 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             username = self._get_reauth_entry().data[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
             
-            client = AtmosEnergyApiClient(username, password)
+            client = AtmosEnergyApiClient(username, password, source="reauth")
             try:
                 await client.login()
                 self.hass.config_entries.async_update_entry(
@@ -160,7 +160,7 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
             username = user_input.get(CONF_USERNAME)
             password = user_input.get(CONF_PASSWORD)
             
-            client = AtmosEnergyApiClient(username, password)
+            client = AtmosEnergyApiClient(username, password, source="options")
             try:
                 await client.login()
                 # If credentials changed, update the config entry data as well

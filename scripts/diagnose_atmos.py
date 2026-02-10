@@ -39,7 +39,7 @@ async def diagnose():
         return
     
     # Initialize client
-    api = AtmosEnergyApiClient(username, password)
+    api = AtmosEnergyApiClient(username, password, source="script")
     
     try:
         print("\n1. Attempting Login...")

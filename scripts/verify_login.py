@@ -43,7 +43,7 @@ async def main():
     
     print("\nAttempting login...")
     
-    client = AtmosEnergyApiClient(username, password)
+    client = AtmosEnergyApiClient(username, password, source="script")
     
     try:
         await client.login()

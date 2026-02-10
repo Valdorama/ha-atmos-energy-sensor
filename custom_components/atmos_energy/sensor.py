@@ -245,9 +245,6 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
         super().__init__(coordinator, entry, account_id)
         self._weather_entity = weather_entity
         self._attr_unique_id = f"{DOMAIN}_{account_id}_predicted_usage_7d"
-        # Coefficients from regression analysis
-        self._base_load = 1.23
-        self._heating_coeff = 0.097
         self._last_forecast_value = None
 
     async def async_added_to_hass(self) -> None:
@@ -256,6 +253,15 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
         # Initial update
         await self.async_update()
         self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self):
+        """Return extra state attributes."""
+        attrs = {
+            "base_load": self.coordinator.base_load,
+            "heating_coefficient": self.coordinator.heating_coeff,
+        }
+        return attrs
 
     async def async_update(self):
         """Update the sensor using the weather service."""
@@ -290,6 +296,11 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
                 return
             
             total_ccf = 0.0
+            
+            # Use dynamic coefficients from coordinator
+            base_load = self.coordinator.base_load
+            heating_coeff = self.coordinator.heating_coeff
+            
             # Calculate for next 7 days
             for day in forecast_data[:7]:
                 # Try native keys first, fall back to standard keys
@@ -299,7 +310,7 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
                 if high is not None and low is not None:
                     avg_temp = (float(high) + float(low)) / 2
                     hdd = max(0, 65 - avg_temp)
-                    daily_usage = self._base_load + (self._heating_coeff * hdd)
+                    daily_usage = base_load + (heating_coeff * hdd)
                     total_ccf += daily_usage
                 else:
                     _LOGGER.debug("Skipping day in forecast due to missing temp data: %s", day)
