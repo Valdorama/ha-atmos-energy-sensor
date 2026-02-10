@@ -5,13 +5,14 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 ## 🛠 Operation Guidelines
 
 ### 1. Development Process (TDD)
+- **Home Assistant Standards**: Follow the official [Home Assistant Developer Guidelines](https://developers.home-assistant.io/docs/creating_component_index/) for custom integrations.
+- **AI Agent Best Practices**: Priority must be placed on **reliability, robustness, and performance**. Agents should proactively handle edge cases, network failures, and API inconsistencies.
 - **Test-First**: Always attempt to reproduce a bug or define a new feature with a test case in `tests/test_reproduction.py` or `tests/test_api.py` before modifying core logic.
 - **Verification**: Ensure all tests pass (`python -m unittest discover tests`) after any non-trivial change.
 
 ### 2. Versioning & Releases
 - **Semantic Versioning**: Use the `v0.x.x` format.
 - **Version Sync (CRITICAL)**: Before creating a git tag, the `version` in `custom_components/atmos_energy/manifest.json` **MUST** be updated to match the target tag version. This ensures the integration reflects the correct version within Home Assistant.
-- **Manifest Sync**: Ensure the `version` in `custom_components/atmos_energy/manifest.json` is bumped and synchronized with git tags.
 - **Release Summaries**: When creating a new release (tagping and pushing), always provide a **Release Summary in Markdown format** as the final step. This summary should be easy to copy/paste and highlight:
     - New Features & Enhancements
     - Fixes & Stability Improvements

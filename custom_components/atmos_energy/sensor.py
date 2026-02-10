@@ -2,6 +2,7 @@ import logging
 from typing import Any
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceNotFound
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -273,7 +274,9 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
         try:
             # Check if weather entity exists to avoid errors
             if not self.hass.states.get(self._weather_entity):
-                _LOGGER.warning("Weather entity %s not found", self._weather_entity)
+                if self._last_forecast_value is not None:  # Only log once
+                    _LOGGER.warning("Weather entity %s not found, disabling predictions", self._weather_entity)
+                    self._last_forecast_value = None
                 return
 
             response = await self.hass.services.async_call(
@@ -318,8 +321,12 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
             self._last_forecast_value = round(total_ccf, 2)
             _LOGGER.debug("Predicted 7-day usage: %s CCF", self._last_forecast_value)
             
+        except ServiceNotFound:
+            _LOGGER.error("Weather service not available, disabling predictions")
+            self._last_forecast_value = None
         except Exception as e:
-             _LOGGER.error("Error updating gas prediction from %s: %s", self._weather_entity, e)
+            _LOGGER.error("Error updating gas prediction from %s: %s", self._weather_entity, e, exc_info=True)
+            # Keep last value instead of None to avoid constant errors if it's just a temporary glitch
 
     @property
     def native_value(self):
