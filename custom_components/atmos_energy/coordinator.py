@@ -37,12 +37,14 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         # Persistent storage for history
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._history = {} # Keyed by date string YYYY-MM-DD
+        self._unsaved_keys = set()  # Track keys that need to be saved
         
         # Model coefficients
         self.base_load = DEFAULT_BASE_LOAD
         self.heating_coeff = DEFAULT_HEATING_COEFF
         self.balance_temp = DEFAULT_BALANCE_TEMP
         self.r_squared = 0.0
+        self._last_optimization_count = 0  # Track when we last did full optimization
         
         super().__init__(
             hass,
@@ -63,9 +65,23 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("Failed to load Atmos history: %s", e)
 
     async def _async_save_history(self):
-        """Save history to storage."""
+        """Save only new history to storage (incremental mode)."""
+        # Only save if we have new data
+        if not self._unsaved_keys:
+            return
+        
         try:
-            await self._store.async_save({"history": self._history})
+            stored = await self._store.async_load() or {}
+            history = stored.get("history", {})
+            
+            # Only update new keys
+            for key in self._unsaved_keys:
+                if key in self._history:
+                    history[key] = self._history[key]
+            
+            await self._store.async_save({"history": history})
+            self._unsaved_keys.clear()
+            _LOGGER.debug("Saved history to storage")
         except Exception as e:
             _LOGGER.error("Failed to save Atmos history: %s", e)
 
@@ -80,8 +96,9 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             return
 
         # Prepare raw data points (Date, Temp, Usage)
+        # Use dict copy to prevent race condition during iteration
         data_points = []
-        for date_str, record in self._history.items():
+        for date_str, record in dict(self._history).items():
             usage = record.get("usage", 0.0)
             avg_temp = record.get("avg_temp")
             if usage > 0.0 and avg_temp is not None:
@@ -90,25 +107,41 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         if len(data_points) < 10:
             return
 
-        best_sse = float('inf')
-        best_model = None
-
-        # Grid Search for optimal Balance Temperature (55°F to 75°F)
-        # Suggestion 1: Auto-detect balance temperature
-        for temp_candidate in [t / 2.0 for t in range(110, 151)]: # 55.0 to 75.0 in 0.5 steps
-            x_values = [max(0, temp_candidate - pt[0]) for pt in data_points]
-            y_values = [pt[1] for pt in data_points]
+        current_count = len(data_points)
+        needs_full_optimization = (current_count - self._last_optimization_count) >= 10
+        
+        if needs_full_optimization:
+            # Full grid search only with significant new data
+            best_sse = float('inf')
+            best_model = None
             
+            # Coarser search: 1°F steps instead of 0.5°F (21 iterations instead of 41)
+            for temp_candidate in range(55, 76):
+                x_values = [max(0, temp_candidate - pt[0]) for pt in data_points]
+                y_values = [pt[1] for pt in data_points]
+                
+                slope, intercept, sse, r2 = self._fit_linear_regression(x_values, y_values)
+                
+                if slope is not None and sse < best_sse:
+                    best_sse = sse
+                    best_model = (slope, intercept, float(temp_candidate), r2)
+            
+            self._last_optimization_count = current_count
+        else:
+            # Quick update with existing balance temp
+            x_values = [max(0, self.balance_temp - pt[0]) for pt in data_points]
+            y_values = [pt[1] for pt in data_points]
             slope, intercept, sse, r2 = self._fit_linear_regression(x_values, y_values)
             
-            if slope is not None and sse < best_sse:
-                best_sse = sse
-                best_model = (slope, intercept, temp_candidate, r2)
+            if slope is not None:
+                best_model = (slope, intercept, self.balance_temp, r2)
+            else:
+                return
 
         if best_model:
             slope, intercept, balance_temp, r2 = best_model
             
-            # Suggestion 3: Improved Slope Clamping & Logging
+            # Improved Slope Clamping & Logging
             if slope < 0:
                 _LOGGER.warning(
                     "Negative heating coefficient (%.4f) detected - usage increases in warmer weather. Clamping to 0.", 
@@ -119,20 +152,43 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Very low heating coefficient (%.4f) - minimal heating load", slope)
 
             if intercept < 0:
-                intercept = 0.1 # Minimum base load
+                intercept = 0.1  # Minimum base load
+            
+            # Validate balance temperature range
+            if balance_temp < 50 or balance_temp > 80:
+                _LOGGER.warning(
+                    "Learned balance temperature (%.1f°F) is outside normal range (50-80°F). Using default %.1f°F instead.",
+                    balance_temp, DEFAULT_BALANCE_TEMP
+                )
+                balance_temp = DEFAULT_BALANCE_TEMP
+            elif balance_temp < 58 or balance_temp > 72:
+                _LOGGER.info(
+                    "Unusual balance temperature (%.1f°F) detected. This may indicate: "
+                    "(1) Unique home characteristics, (2) Insufficient data, or (3) Non-heating gas usage patterns.",
+                    balance_temp
+                )
 
             self.heating_coeff = round(slope, 4)
             self.base_load = round(intercept, 2)
             self.balance_temp = balance_temp
             self.r_squared = round(r2, 4)
             
-            # Suggestion 2: Log model fit quality
+            # Log model fit quality
+            optimization_type = "full" if needs_full_optimization else "quick"
             _LOGGER.info(
-                "Updated Atmos Model: R²=%.3f, Base=%.2f CCF, Coeff=%.4f CCF/HDD, Balance=%.1f°F (N=%d points)",
-                self.r_squared, self.base_load, self.heating_coeff, self.balance_temp, len(data_points)
+                "Updated Model: R²=%.3f, Base=%.2f CCF, Coeff=%.4f, Balance=%.1f°F (N=%d, %s)",
+                self.r_squared, self.base_load, self.heating_coeff, self.balance_temp, 
+                len(data_points), optimization_type
             )
             
-            if self.r_squared < 0.5:
+            # Handle negative R² (model worse than mean)
+            if self.r_squared < 0:
+                _LOGGER.error(
+                    "Model has negative R² (%.3f) - fit is worse than average. "
+                    "Your gas usage may not correlate with temperature at all.",
+                    self.r_squared
+                )
+            elif self.r_squared < 0.5:
                 _LOGGER.warning(
                     "Poor model fit (R²=%.3f). Gas usage may not correlate well with temperature.", 
                     self.r_squared
@@ -166,6 +222,11 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         
         return slope, intercept, sse, r_squared
 
+    @property
+    def history_count(self) -> int:
+        """Return number of days in history."""
+        return len(self._history)
+
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -187,6 +248,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                         key = date_str.split(" ")[0]
                         if key not in self._history:
                             self._history[key] = record
+                            self._unsaved_keys.add(key)  # Track for incremental save
                             updated = True
                 
                 # Prune old history (> 90 days)
@@ -210,6 +272,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 for k in keys_to_remove:
                     del self._history[k]
+                    self._unsaved_keys.discard(k)  # Remove from unsaved if it was there
                     updated = True
 
                 if updated:
@@ -236,3 +299,30 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.exception("Unexpected error updating Atmos Energy data")
             raise UpdateFailed(f"Unexpected error: {err}") from err
+        finally:
+            # Smart scheduling: Atmos updates data around 6-7 AM local time
+            # Schedule next update for 7 AM next day
+            self._schedule_next_update()
+
+    def _schedule_next_update(self):
+        """Calculate and set next update time based on Atmos update schedule."""
+        now = dt_util.now()
+        
+        # Target update time: 7 AM local time (Atmos typically updates around 6 AM)
+        next_update = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        
+        # If it's already past 7 AM today, schedule for 7 AM tomorrow
+        if next_update <= now:
+            next_update += timedelta(days=1)
+        
+        # Calculate time until next update
+        time_until_next = next_update - now
+        
+        # Update the coordinator's update interval
+        self.update_interval = time_until_next
+        
+        _LOGGER.debug(
+            "Next Atmos update scheduled for %s (in %s)",
+            next_update.strftime("%Y-%m-%d %H:%M:%S"),
+            time_until_next
+        )

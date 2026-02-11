@@ -3,7 +3,7 @@ from datetime import timedelta
 
 DOMAIN = "atmos_energy"
 TIMEOUT = 60
-SCAN_INTERVAL = timedelta(hours=12)
+SCAN_INTERVAL = timedelta(hours=24)  # Initial interval; smart scheduling adjusts to 7 AM daily
 
 CONF_FIXED_COST = "fixed_cost"
 CONF_USAGE_RATE = "usage_rate"

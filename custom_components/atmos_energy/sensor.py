@@ -12,11 +12,10 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.components.weather import (
     ATTR_FORECAST_NATIVE_TEMP,
     ATTR_FORECAST_NATIVE_TEMP_LOW,
-    SERVICE_GET_FORECASTS
 )
 
 from .const import (
@@ -265,11 +264,16 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
             )
         )
         
-        # Listen for weather entity state changes (catch when it becomes available)
+        # Set up periodic refresh every 6 hours instead of state tracking
+        # Predictions only need updating when forecast changes (2-4x per day)
+        async def _periodic_update(_now):
+            await self.async_update()
+            self.async_write_ha_state()
+        
+        # Update every 6 hours instead of on every weather state change
+        from datetime import timedelta
         self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._weather_entity], self._handle_weather_change
-            )
+            async_track_time_interval(self.hass, _periodic_update, timedelta(hours=6))
         )
 
         # Initial update
@@ -281,17 +285,6 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
         _LOGGER.debug("Home Assistant started, refreshing Atmos predictions")
         await self.async_update()
         self.async_write_ha_state()
-
-    async def _handle_weather_change(self, event):
-        """Handle weather entity state changes."""
-        new_state = event.data.get("new_state")
-        if new_state and new_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            # Only trigger if the previous state was unknown/unavailable
-            old_state = event.data.get("old_state")
-            if not old_state or old_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                _LOGGER.debug("Weather entity %s available, refreshing Atmos predictions", self._weather_entity)
-                await self.async_update()
-                self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self):

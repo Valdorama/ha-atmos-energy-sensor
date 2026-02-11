@@ -36,8 +36,8 @@ async def async_get_config_entry_diagnostics(
             "heating_coefficient": coordinator.heating_coeff,
             "balance_temperature": coordinator.balance_temp,
             "r_squared": coordinator.r_squared,
-            "history_days": len(coordinator._history),
-            "model_trained": len(coordinator._history) >= 10,
+            "history_days": coordinator.history_count,
+            "model_trained": coordinator.history_count >= 10,
         },
         "options": dict(entry.options),
     }
