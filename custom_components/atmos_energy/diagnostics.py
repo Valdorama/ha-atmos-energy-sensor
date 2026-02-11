@@ -31,5 +31,13 @@ async def async_get_config_entry_diagnostics(
             "update_interval": coordinator.update_interval.total_seconds() if coordinator.update_interval else None,
         },
         "coordinator_data": coordinator.data if coordinator.data else {},
+        "model_info": {
+            "base_load": coordinator.base_load,
+            "heating_coefficient": coordinator.heating_coeff,
+            "balance_temperature": coordinator.balance_temp,
+            "r_squared": coordinator.r_squared,
+            "history_days": len(coordinator._history),
+            "model_trained": len(coordinator._history) >= 10,
+        },
         "options": dict(entry.options),
     }

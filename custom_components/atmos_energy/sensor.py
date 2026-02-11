@@ -6,7 +6,13 @@ from homeassistant.exceptions import ServiceNotFound
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.const import CONF_USERNAME
+from homeassistant.const import (
+    CONF_USERNAME,
+    EVENT_HOMEASSISTANT_STARTED,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.components.weather import (
     ATTR_FORECAST_NATIVE_TEMP,
     ATTR_FORECAST_NATIVE_TEMP_LOW,
@@ -251,9 +257,41 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
         await super().async_added_to_hass()
+        
+        # Listen for Home Assistant started event to retry update
+        self.async_on_remove(
+            self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, self._handle_startup
+            )
+        )
+        
+        # Listen for weather entity state changes (catch when it becomes available)
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self._weather_entity], self._handle_weather_change
+            )
+        )
+
         # Initial update
         await self.async_update()
         self.async_write_ha_state()
+
+    async def _handle_startup(self, _event):
+        """Handle Home Assistant started."""
+        _LOGGER.debug("Home Assistant started, refreshing Atmos predictions")
+        await self.async_update()
+        self.async_write_ha_state()
+
+    async def _handle_weather_change(self, event):
+        """Handle weather entity state changes."""
+        new_state = event.data.get("new_state")
+        if new_state and new_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            # Only trigger if the previous state was unknown/unavailable
+            old_state = event.data.get("old_state")
+            if not old_state or old_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                _LOGGER.debug("Weather entity %s available, refreshing Atmos predictions", self._weather_entity)
+                await self.async_update()
+                self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self):
@@ -261,6 +299,8 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
         attrs = {
             "base_load": self.coordinator.base_load,
             "heating_coefficient": self.coordinator.heating_coeff,
+            "balance_temperature": self.coordinator.balance_temp,
+            "r_squared": self.coordinator.r_squared,
         }
         return attrs
 
@@ -273,10 +313,13 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
         _LOGGER.debug("Updating predicted usage sensor using %s", self._weather_entity)
         try:
             # Check if weather entity exists to avoid errors
-            if not self.hass.states.get(self._weather_entity):
-                if self._last_forecast_value is not None:  # Only log once
-                    _LOGGER.warning("Weather entity %s not found, disabling predictions", self._weather_entity)
+            state = self.hass.states.get(self._weather_entity)
+            if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                if self._last_forecast_value is not None:  # Only log warning once if it disappears
+                    _LOGGER.warning("Weather entity %s not found or unavailable, disabling predictions", self._weather_entity)
                     self._last_forecast_value = None
+                else:
+                    _LOGGER.debug("Weather entity %s not yet ready", self._weather_entity)
                 return
 
             response = await self.hass.services.async_call(
@@ -304,6 +347,8 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
             base_load = self.coordinator.base_load
             heating_coeff = self.coordinator.heating_coeff
             
+            balance_temp = self.coordinator.balance_temp
+            
             # Calculate for next 7 days
             for day in forecast_data[:7]:
                 # Try native keys first, fall back to standard keys
@@ -312,7 +357,7 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
                 
                 if high is not None and low is not None:
                     avg_temp = (float(high) + float(low)) / 2
-                    hdd = max(0, 65 - avg_temp)
+                    hdd = max(0, balance_temp - avg_temp)
                     daily_usage = base_load + (heating_coeff * hdd)
                     total_ccf += daily_usage
                 else:

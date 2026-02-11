@@ -18,7 +18,8 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
     DEFAULT_BASE_LOAD,
-    DEFAULT_HEATING_COEFF
+    DEFAULT_HEATING_COEFF,
+    DEFAULT_BALANCE_TEMP
 )
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError, DataParseError
@@ -40,6 +41,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         # Model coefficients
         self.base_load = DEFAULT_BASE_LOAD
         self.heating_coeff = DEFAULT_HEATING_COEFF
+        self.balance_temp = DEFAULT_BALANCE_TEMP
+        self.r_squared = 0.0
         
         super().__init__(
             hass,
@@ -67,70 +70,101 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Failed to save Atmos history: %s", e)
 
     def _recalculate_model(self):
-        """Calculate Base Load and Heating Coefficient using Linear Regression."""
+        """Calculate Base Load, Heating Coefficient, and Balance Temp using Linear Regression."""
         if len(self._history) < 10:
             _LOGGER.debug("Insufficient history (%d days) for regression, using defaults", len(self._history))
             self.base_load = DEFAULT_BASE_LOAD
             self.heating_coeff = DEFAULT_HEATING_COEFF
+            self.balance_temp = DEFAULT_BALANCE_TEMP
+            self.r_squared = 0.0
             return
 
-        # Prepare data points (X=HDD, Y=Usage)
-        x_values = [] # HDD
-        y_values = [] # Usage
-        
-        # Outlier filtering thresholds (basic sanity check)
-        # We ignore days with 0 usage (vacation/error)
-        
+        # Prepare raw data points (Date, Temp, Usage)
+        data_points = []
         for date_str, record in self._history.items():
             usage = record.get("usage", 0.0)
             avg_temp = record.get("avg_temp")
-            
-            if usage <= 0.0 or avg_temp is None:
-                continue
-                
-            hdd = max(0, 65 - avg_temp)
-            
-            x_values.append(hdd)
-            y_values.append(usage)
+            if usage > 0.0 and avg_temp is not None:
+                data_points.append((avg_temp, usage))
 
-        n = len(x_values)
-        if n < 10:
+        if len(data_points) < 10:
             return
 
-        # Simple Linear Regression: Y = mx + b
-        # m = (N*Σxy - Σx*Σy) / (N*Σx² - (Σx)²)
-        # b = (Σy - m*Σx) / N
-        
+        best_sse = float('inf')
+        best_model = None
+
+        # Grid Search for optimal Balance Temperature (55°F to 75°F)
+        # Suggestion 1: Auto-detect balance temperature
+        for temp_candidate in [t / 2.0 for t in range(110, 151)]: # 55.0 to 75.0 in 0.5 steps
+            x_values = [max(0, temp_candidate - pt[0]) for pt in data_points]
+            y_values = [pt[1] for pt in data_points]
+            
+            slope, intercept, sse, r2 = self._fit_linear_regression(x_values, y_values)
+            
+            if slope is not None and sse < best_sse:
+                best_sse = sse
+                best_model = (slope, intercept, temp_candidate, r2)
+
+        if best_model:
+            slope, intercept, balance_temp, r2 = best_model
+            
+            # Suggestion 3: Improved Slope Clamping & Logging
+            if slope < 0:
+                _LOGGER.warning(
+                    "Negative heating coefficient (%.4f) detected - usage increases in warmer weather. Clamping to 0.", 
+                    slope
+                )
+                slope = 0.0
+            elif slope < 0.01:
+                _LOGGER.debug("Very low heating coefficient (%.4f) - minimal heating load", slope)
+
+            if intercept < 0:
+                intercept = 0.1 # Minimum base load
+
+            self.heating_coeff = round(slope, 4)
+            self.base_load = round(intercept, 2)
+            self.balance_temp = balance_temp
+            self.r_squared = round(r2, 4)
+            
+            # Suggestion 2: Log model fit quality
+            _LOGGER.info(
+                "Updated Atmos Model: R²=%.3f, Base=%.2f CCF, Coeff=%.4f CCF/HDD, Balance=%.1f°F (N=%d points)",
+                self.r_squared, self.base_load, self.heating_coeff, self.balance_temp, len(data_points)
+            )
+            
+            if self.r_squared < 0.5:
+                _LOGGER.warning(
+                    "Poor model fit (R²=%.3f). Gas usage may not correlate well with temperature.", 
+                    self.r_squared
+                )
+
+    def _fit_linear_regression(self, x_values, y_values):
+        """Fit a linear regression and return slope, intercept, SSE, and R2."""
+        n = len(x_values)
         sum_x = sum(x_values)
         sum_y = sum(y_values)
         sum_xy = sum(x*y for x, y in zip(x_values, y_values))
         sum_x2 = sum(x*x for x in x_values)
         
         denominator = (n * sum_x2 - sum_x**2)
-        
         if denominator == 0:
-            _LOGGER.warning("Cannot calculate regression: denominator is zero")
-            return
-
+            return None, None, float('inf'), 0
+            
         slope = (n * sum_xy - sum_x * sum_y) / denominator
         intercept = (sum_y - slope * sum_x) / n
         
-        # Sanity bounds for the model
-        # Slope (heating coeff) should be positive (colder = more gas)
-        # Intercept (base load) should be positive
+        # Calculate SSE and R2
+        y_mean = sum_y / n
+        ss_tot = sum((y - y_mean)**2 for y in y_values)
         
-        if slope < 0.01: 
-             # If slope is negative or tiny, it means usage doesn't correlate with cold. 
-             # This happens in summer. We might just stick to defaults or clamp it.
-             slope = max(0.0, slope)
-             
-        if intercept < 0:
-            intercept = 0.1 # Minimum base load
-
-        self.heating_coeff = round(slope, 4)
-        self.base_load = round(intercept, 2)
+        sse = 0.0
+        for x, y in zip(x_values, y_values):
+            prediction = intercept + slope * x
+            sse += (y - prediction)**2
+            
+        r_squared = 1 - (sse / ss_tot) if ss_tot > 0 else 0
         
-        _LOGGER.debug("Updated Regression Model (N=%d): Base Load=%.2f, Heat Coeff=%.4f", n, self.base_load, self.heating_coeff)
+        return slope, intercept, sse, r_squared
 
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -159,21 +193,20 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 cutoff = dt_util.now() - timedelta(days=90)
                 keys_to_remove = []
                 for date_str in self._history:
-                    try:
-                        # Attempt to parse
-                        # Handle varied formats
-                        dt = None
+                    # Suggestion 5: Better date parsing
+                    dt = dt_util.parse_datetime(date_str)
+                    if not dt:
+                        # Fallback for keys like YYYY-MM-DD
                         for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
                             try:
-                                dt = datetime.strptime(date_str, fmt).replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                                naive_dt = datetime.strptime(date_str, fmt)
+                                dt = dt_util.as_local(naive_dt)
                                 break
                             except ValueError:
                                 pass
-                        
-                        if dt and dt < cutoff:
-                            keys_to_remove.append(date_str)
-                    except Exception:
-                        pass # Keep if we can't parse
+                    
+                    if dt and dt < cutoff:
+                        keys_to_remove.append(date_str)
                 
                 for k in keys_to_remove:
                     del self._history[k]
