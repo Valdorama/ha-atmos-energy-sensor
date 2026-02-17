@@ -20,7 +20,7 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 ### 2. Versioning & Releases
 - **Semantic Versioning**: Use the `v0.x.x` format.
 - **Version Sync (CRITICAL)**: Before creating a git tag, the `version` in `custom_components/atmos_energy/manifest.json` **MUST** be updated to match the target tag version. This ensures the integration reflects the correct version within Home Assistant.
-- **Release Summaries**: When creating a new release (tagping and pushing), always provide a **Release Summary in Markdown format** as the final step. This summary should be easy to copy/paste and highlight:
+- **Release Summaries**: When creating a new release (tagging and pushing), always provide a **Release Summary in Markdown format** as the final step. This summary should be easy to copy/paste and highlight:
     - New Features & Enhancements
     - Fixes & Stability Improvements
     - Internal Cleanup
@@ -31,21 +31,21 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 - **Session Lifecycle**: Remember that Atmos Energy requires a multi-hop login flow (Form -> POST -> Landing Page) to properly initialize the session for file downloads.
 - **Data Granularity**: Support both daily (`dailyUsageDownload.html`) and monthly (`monthlyUsageDownload.html`) data sources. Check the `daily_usage` config option before selecting the API method.
 - **Robust Parsing**: Always use `content.strip()` before parsing XLS data to handle leading whitespace bugs. Maintain the HTML table fallback for mislabeled files.
-- **Measurement vs Total**: Sensors using `state_class: measurement` (like the monthly usage sensor) should have `device_class: None` to avoid Home Assistant validation errors with gas units.
+- **Date Handling**: The Atmos portal sometimes returns verbose Java-style dates (e.g., `Wed Mar 11 00:00:00 CDT 2026`). The parsing logic in `Coordinator._parse_next_read_date` is designed to strip timezones and attempt multiple formats for robustness.
 
-### 3a. Performance Optimizations (v0.6.1+)
-- **Conditional Grid Search**: Full optimization (21 iterations) only runs when 10+ new data points are added. Otherwise, a quick update using existing balance temperature is performed (~95% faster).
+### 3a. Performance Optimizations (v0.7.0+)
+- **Centralized Heavy Lifting**: Weather service calls (`get_forecasts`), WNA math, and date parsing are performed **once** in the `Coordinator`. Sensors are "dumb" and only display pre-calculated values from `coordinator.data`.
+- **GCR PDF Discovery**: The `GCRRateFetcher` uses Gatsby `page-data.json` discovery to find the dynamic monthly static PDF link without needing a browser.
+- **Conditional Grid Search**: Full ML optimization (21 iterations) only runs when 10+ new data points are added. Otherwise, a quick update using existing balance temperature is performed.
 - **Smart Scheduling**: Updates scheduled for 7 AM local time daily (aligned with Atmos's ~6 AM data refresh) instead of fixed intervals.
 - **Incremental Storage**: Only new/modified history records are written to storage, not the entire dict.
-- **Periodic Weather Updates**: Prediction sensors update every 6 hours instead of on every weather state change (~96% fewer events).
-- **Race Condition Protection**: All dict iterations use `dict(self._history).items()` to prevent modification during iteration.
-- **Balance Temp Validation**: Learned balance temperatures are validated (50-80°F range) with warnings for unusual values.
 
 ### 4. Home Assistant Integration Standards
-- **Device Support**: The integration should be classified as a `hub` or `device`. Entities should be associated with the device using `has_entity_name = True`.
-- **Naming**: Prefix entity names with `atmos_energy_` to ensure unique and clear identification in the HA registry.
-- **Energy Dashboard**: Set `state_class: total` and `device_class: monetary` for the Estimated Cost sensor to ensure compatibility with cost tracking.
+- **Device Support**: The integration is classified as a `device`. Entities are associated with the device using `has_entity_name = True`.
+- **Naming**: Prefix entity names with `atmos_energy_` to ensure unique identification in the HA registry.
+- **UI Wizards**: The setup and options flows use a multi-step "wizard" pattern to reduce complexity and provide context about regional limitations (e.g., advanced prediction is Mid-Tex only).
 
 ## 🔍 Troubleshooting
 - Use `scripts/diagnose_atmos.py` for live login and download testing.
 - Refer to `walkthrough.md` for historical context on recent fixes.
+- **GCR Issues**: Check the `atmos_energy_gcr_cache` storage file to verify cached rates.

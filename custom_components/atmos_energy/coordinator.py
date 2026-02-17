@@ -1,6 +1,7 @@
 """DataUpdateCoordinator for Atmos Energy."""
 import logging
 import math
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -15,14 +16,21 @@ from .const import (
     DOMAIN, 
     SCAN_INTERVAL, 
     CONF_DAILY_USAGE,
+    CONF_WEATHER_STATION,
+    CONF_WEATHER_ENTITY,
+    CONF_AUTO_FETCH_GCR,
     STORAGE_KEY,
     STORAGE_VERSION,
     DEFAULT_BASE_LOAD,
     DEFAULT_HEATING_COEFF,
-    DEFAULT_BALANCE_TEMP
+    DEFAULT_BALANCE_TEMP,
+    ATTR_BILLING_PERIOD_START,
+    ATTR_USAGE
 )
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError, DataParseError
+from .wna.calculator import WNACalculator
+from .wna.gcr_fetcher import GCRRateFetcher
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +41,16 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         """Initialize."""
         self.client = client
         self.config_entry = entry
+        
+        # Get weather station from config
+        station_id = entry.options.get(CONF_WEATHER_STATION, "austin")
+        
+        # Initialize WNA calculator
+        self.wna_calculator = WNACalculator(station_id)
+        
+        # Initialize GCR fetcher
+        self.gcr_fetcher = GCRRateFetcher(hass)
+        self.current_gcr_rate = None
         
         # Persistent storage for history
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -56,6 +74,9 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_load_history(self):
         """Load history from storage."""
         try:
+            # Load GCR cache
+            await self.gcr_fetcher.async_load()
+            
             stored = await self._store.async_load()
             if stored:
                 self._history = stored.get("history", {})
@@ -227,6 +248,143 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         """Return number of days in history."""
         return len(self._history)
 
+    def _parse_next_read_date(self, date_str: str | None) -> datetime | None:
+        """Parse next meter read date into a datetime object."""
+        if not date_str:
+            return None
+            
+        # Try multiple formats
+        for fmt in ("%m/%d/%Y", "%a %b %d %H:%M:%S %Z %Y", "%a %b %d %H:%M:%S %Y"):
+            try:
+                clean_str = date_str
+                if " " in date_str and len(date_str.split()) == 6:
+                    # Handle verbose format like "Wed Mar 11 00:00:00 CDT 2026"
+                    parts = date_str.split()
+                    clean_str = f"{parts[0]} {parts[1]} {parts[2]} {parts[3]} {parts[5]}"
+                    return datetime.strptime(clean_str, "%a %b %d %H:%M:%S %Y")
+                else:
+                    return datetime.strptime(clean_str, fmt)
+            except Exception:
+                continue
+        return None
+
+    async def _calculate_projected_add(self, data: dict[str, Any]) -> int:
+        """Calculate projected total ADD for the billing period."""
+        actual_hdd = data.get("actual_hdd", 0)
+        billing_days = data.get("billing_period_days", 0)
+        
+        next_read_dt = data.get("next_meter_read_dt")
+        
+        days_remaining = 0
+        if next_read_dt:
+            try:
+                localized_next = dt_util.as_local(next_read_dt)
+                now = dt_util.now()
+                days_remaining = (localized_next - now).days
+            except Exception as e:
+                _LOGGER.warning("Error calculating days remaining from %s: %s", next_read_dt, e)
+                days_remaining = max(0, 30 - billing_days)
+        else:
+            # Typical billing period is 30 days
+            days_remaining = max(0, 30 - billing_days)
+        
+        if days_remaining <= 0:
+            return actual_hdd
+            
+        # Get weather forecast if configured
+        weather_entity = self.config_entry.options.get(CONF_WEATHER_ENTITY)
+        forecast_hdd = 0
+        
+        if weather_entity:
+            try:
+                # Use Home Assistant 2024.7+ style forecast call
+                response = await self.hass.services.async_call(
+                    "weather",
+                    "get_forecasts",
+                    {"type": "daily", "entity_id": [weather_entity]},
+                    blocking=True,
+                    return_response=True,
+                )
+                
+                forecast_data = response.get(weather_entity, {}).get("forecast", [])
+                
+                if forecast_data:
+                    # Use min(days_remaining, forecast_length) days
+                    days_to_forecast = min(days_remaining, len(forecast_data))
+                    
+                    for day in forecast_data[:days_to_forecast]:
+                        high = day.get("native_temperature") or day.get("temperature")
+                        low = day.get("native_temp_low") or day.get("templow")
+                        
+                        if high is not None and low is not None:
+                            avg_temp = (float(high) + float(low)) / 2
+                            daily_hdd = max(0, 65 - avg_temp)
+                            forecast_hdd += daily_hdd
+                    
+                    # If forecast doesn't cover all remaining days, extrapolate
+                    if days_to_forecast < days_remaining:
+                        avg_forecast_hdd = forecast_hdd / days_to_forecast if days_to_forecast > 0 else 0
+                        remaining_days = days_remaining - days_to_forecast
+                        forecast_hdd += avg_forecast_hdd * remaining_days
+                    
+                    _LOGGER.debug(
+                        "HDD Projection (Weather): actual=%d, forecast=%d, total=%d",
+                        actual_hdd, int(forecast_hdd), actual_hdd + int(forecast_hdd)
+                    )
+                    return actual_hdd + int(forecast_hdd)
+                    
+            except Exception as e:
+                _LOGGER.warning("Could not get weather forecast for HDD projection: %s", e)
+        
+        # Fallback: Use historical NDD to estimate remaining days
+        current_month = datetime.now().month
+        monthly_ndd = self.wna_calculator.get_ndd_for_month(current_month)
+        
+        if monthly_ndd > 0:
+            avg_daily_hdd = monthly_ndd / 30
+            forecast_hdd = avg_daily_hdd * days_remaining
+            _LOGGER.debug(
+                "HDD Projection (Fallback): actual=%d, forecast=%d (NDD based), total=%d",
+                actual_hdd, int(forecast_hdd), actual_hdd + int(forecast_hdd)
+            )
+            return actual_hdd + int(forecast_hdd)
+            
+        return actual_hdd
+
+    async def _calculate_predicted_usage_7d(self) -> float | None:
+        """Calculate predicted usage for next 7 days once."""
+        weather_entity = self.config_entry.options.get(CONF_WEATHER_ENTITY)
+        if not weather_entity:
+            return None
+            
+        try:
+            response = await self.hass.services.async_call(
+                "weather",
+                "get_forecasts",
+                {"type": "daily", "entity_id": [weather_entity]},
+                blocking=True,
+                return_response=True,
+            )
+            forecast_data = response.get(weather_entity, {}).get("forecast", [])
+            if not forecast_data:
+                return None
+                
+            total_ccf = 0.0
+            for day in forecast_data[:7]:
+                high = day.get("native_temperature") or day.get("temperature")
+                low = day.get("native_temp_low") or day.get("templow")
+                if high is not None and low is not None:
+                    avg_temp = (float(high) + float(low)) / 2
+                    hdd = max(0, self.balance_temp - avg_temp)
+                    daily_usage = self.base_load + (self.heating_coeff * hdd)
+                    total_ccf += daily_usage
+            
+            prediction = round(total_ccf, 2)
+            _LOGGER.debug("Predicted 7-day usage from coordinator: %s CCF", prediction)
+            return prediction
+        except Exception as e:
+            _LOGGER.warning("Error calculating 7-day predicted usage: %s", e)
+            return None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -237,28 +395,69 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             data = await self.client.get_account_data(daily_usage=daily_usage)
             
+            # Parse next meter read date once
+            data["next_meter_read_dt"] = self._parse_next_read_date(data.get("next_meter_read_date"))
+            
+            # NEW: Update GCR rate
+            use_auto_gcr = self.config_entry.options.get(CONF_AUTO_FETCH_GCR, True)
+            if use_auto_gcr:
+                gcr_rate = await self.gcr_fetcher.get_current_rate()
+                if gcr_rate:
+                    self.current_gcr_rate = gcr_rate
+            
+            # NEW: Calculate projected ADD and centralized WNA
+            if daily_usage:
+                data["projected_add"] = await self._calculate_projected_add(data)
+                
+                # Pre-calculate WNA Charge and components
+                usage = data.get(ATTR_USAGE, 0)
+                billing_start = data.get(ATTR_BILLING_PERIOD_START)
+                billing_month = datetime.now().month
+                if billing_start:
+                    try:
+                        billing_month = datetime.strptime(billing_start.split()[0], "%Y-%m-%d").month
+                    except:
+                        pass
+                
+                projected_add = data.get("projected_add", self.wna_calculator.get_ndd_for_month(billing_month))
+                
+                # Perform the calculation ONCE
+                wnaf_cents = self.wna_calculator.calculate_wnaf(billing_month, projected_add)
+                wna_charge = self.wna_calculator.calculate_wna_charge(
+                    billing_month, projected_add, usage, wnaf_cents=wnaf_cents
+                )
+                
+                data["wna_calculated"] = {
+                    "wnaf_rate": f"${wnaf_cents/100:.6f}/CCF",
+                    "wna_charge": wna_charge,
+                    "ndd": self.wna_calculator.get_ndd_for_month(billing_month),
+                    "add_projected": projected_add,
+                    "billing_month": billing_month,
+                    "weather_station": self.wna_calculator.station_id,
+                }
+                
+                # Calculate 7-day prediction once
+                data["predicted_usage_7d"] = await self._calculate_predicted_usage_7d()
+
             # Update History if available
             new_history = data.get("history", [])
             if new_history:
                 updated = False
                 for record in new_history:
                     date_str = record.get("date")
-                    # 'date' in XLS is often YYYY-MM-DD HH:MM:SS, let's normalize to YYYY-MM-DD
                     if date_str:
                         key = date_str.split(" ")[0]
                         if key not in self._history:
                             self._history[key] = record
-                            self._unsaved_keys.add(key)  # Track for incremental save
+                            self._unsaved_keys.add(key)
                             updated = True
                 
                 # Prune old history (> 90 days)
                 cutoff = dt_util.now() - timedelta(days=90)
                 keys_to_remove = []
                 for date_str in self._history:
-                    # Suggestion 5: Better date parsing
                     dt = dt_util.parse_datetime(date_str)
                     if not dt:
-                        # Fallback for keys like YYYY-MM-DD
                         for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
                             try:
                                 naive_dt = datetime.strptime(date_str, fmt)
@@ -272,7 +471,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 for k in keys_to_remove:
                     del self._history[k]
-                    self._unsaved_keys.discard(k)  # Remove from unsaved if it was there
+                    self._unsaved_keys.discard(k)
                     updated = True
 
                 if updated:
@@ -285,13 +484,12 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 if usage < 0:
                     _LOGGER.warning("Negative usage value received: %s. Setting to 0", usage)
                     data["usage"] = 0.0
-                elif usage > 10000: # Relaxed sanity check (10,000 CCF)
+                elif usage > 10000:
                     _LOGGER.warning("Unusually high gas usage detected: %s CCF", usage)
             
             return data
             
         except AuthenticationError as err:
-            # Trigger reauth flow
             self.config_entry.async_start_reauth(self.hass)
             raise UpdateFailed(f"Authentication failed: {err}") from err
         except (APIError, DataParseError, aiohttp.ClientError) as err:
@@ -300,27 +498,16 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.exception("Unexpected error updating Atmos Energy data")
             raise UpdateFailed(f"Unexpected error: {err}") from err
         finally:
-            # Smart scheduling: Atmos updates data around 6-7 AM local time
-            # Schedule next update for 7 AM next day
             self._schedule_next_update()
 
     def _schedule_next_update(self):
         """Calculate and set next update time based on Atmos update schedule."""
         now = dt_util.now()
-        
-        # Target update time: 7 AM local time (Atmos typically updates around 6 AM)
         next_update = now.replace(hour=7, minute=0, second=0, microsecond=0)
-        
-        # If it's already past 7 AM today, schedule for 7 AM tomorrow
         if next_update <= now:
             next_update += timedelta(days=1)
-        
-        # Calculate time until next update
         time_until_next = next_update - now
-        
-        # Update the coordinator's update interval
         self.update_interval = time_until_next
-        
         _LOGGER.debug(
             "Next Atmos update scheduled for %s (in %s)",
             next_update.strftime("%Y-%m-%d %H:%M:%S"),

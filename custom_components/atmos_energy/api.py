@@ -3,6 +3,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from typing import Any
+import re
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -350,6 +351,18 @@ class AtmosEnergyApiClient:
             df['consumption'] = pd.to_numeric(df['consumption'], errors='coerce')
             df = df.dropna(subset=['consumption'])
             
+            # Calculate actual HDD from temperature data
+            actual_hdd = 0
+            if avg_temp_col:
+                df[avg_temp_col] = pd.to_numeric(df[avg_temp_col], errors='coerce')
+                
+                for _, row in df.iterrows():
+                    avg_temp = row.get(avg_temp_col)
+                    if pd.notnull(avg_temp):
+                        # HDD = max(0, 65°F - avg_temp)
+                        daily_hdd = max(0, 65 - avg_temp)
+                        actual_hdd += daily_hdd
+
             # Extract history
             history = []
             if date_col:
@@ -378,14 +391,54 @@ class AtmosEnergyApiClient:
                 "latest_usage": latest_usage,
                 "latest_date": latest_date,
                 "billing_period_start": first_date,
-                "history": history
+                "history": history,
+                "actual_hdd": int(actual_hdd),
+                "billing_period_days": len(df),
+                "has_temperature_data": avg_temp_col is not None,
             }
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _parse_impl)
 
+    async def _get_next_meter_read_date(self) -> str | None:
+        """Fetch and parse next meter read date from landing page."""
+        url = f"{self._base_url}/accountcenter/landing/landingScreen.html"
+        _LOGGER.debug("Fetching landing page for next meter read date")
+        
+        try:
+            status, effective_url, content = await self._request_with_retry(
+                'get', 
+                url, 
+                headers=self._common_headers,
+                allow_redirects=True
+            )
+            await self._verify_response_headers(status, effective_url)
+            
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Find the span with label "Next meter read date:"
+            label_span = soup.find('span', string=re.compile(r'Next meter read date', re.IGNORECASE))
+            if label_span:
+                value_span = label_span.find_next_sibling('span', class_='value')
+                if value_span:
+                    date_str = value_span.get_text(strip=True)
+                    _LOGGER.debug("Found next meter read date: %s", date_str)
+                    return date_str
+            
+            _LOGGER.debug("Next meter read date not found on landing page")
+            return None
+        except Exception as e:
+            _LOGGER.warning("Error parsing next meter read date: %s", e)
+            return None
+
     async def get_account_data(self, daily_usage: bool = True) -> dict[str, Any]:
         """Fetch account data including usage."""
+        # 1. Login and get basic session setup
+        await self.login()
+        
+        # 2. Get Next Meter Read Date from landing page
+        next_read_date = await self._get_next_meter_read_date()
+        
         if daily_usage:
             usage_data = await self.get_daily_usage()
             return {
@@ -395,6 +448,10 @@ class AtmosEnergyApiClient:
                 "amount_due": None,
                 "usage": usage_data.get("total_usage", 0.0),
                 "history": usage_data.get("history", []),
+                "actual_hdd": usage_data.get("actual_hdd", 0),
+                "billing_period_days": usage_data.get("billing_period_days", 0),
+                "has_temperature_data": usage_data.get("has_temperature_data", False),
+                "next_meter_read_date": next_read_date,
             }
         
         usage_data = await self.get_monthly_usage()
@@ -404,6 +461,7 @@ class AtmosEnergyApiClient:
             "avg_temp": usage_data.get("avg_temp"),
             "billing_month": usage_data.get("billing_month"),
             "usage": usage_data.get("usage", 0.0),
+            "next_meter_read_date": next_read_date,
         }
         
     async def close(self) -> None:

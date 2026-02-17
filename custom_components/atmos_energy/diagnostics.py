@@ -31,6 +31,17 @@ async def async_get_config_entry_diagnostics(
             "update_interval": coordinator.update_interval.total_seconds() if coordinator.update_interval else None,
         },
         "coordinator_data": coordinator.data if coordinator.data else {},
+        "wna_info": {
+            "station_id": coordinator.wna_calculator.station_id,
+            "base_load": coordinator.wna_calculator.base_load,
+            "heat_factor": coordinator.wna_calculator.heat_factor,
+            "commodity_rate": coordinator.wna_calculator.commodity_rate,
+        },
+        "gcr_info": {
+            "current_rate": coordinator.current_gcr_rate,
+            "last_fetch": coordinator.gcr_fetcher._last_fetch.isoformat() if coordinator.gcr_fetcher._last_fetch else None,
+            "cache_size": len(coordinator.gcr_fetcher._cache),
+        },
         "model_info": {
             "base_load": coordinator.base_load,
             "heating_coefficient": coordinator.heating_coeff,

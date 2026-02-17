@@ -5,12 +5,18 @@ DOMAIN = "atmos_energy"
 TIMEOUT = 60
 SCAN_INTERVAL = timedelta(hours=24)  # Initial interval; smart scheduling adjusts to 7 AM daily
 
+# Configuration keys
 CONF_FIXED_COST = "fixed_cost"
 CONF_USAGE_RATE = "usage_rate"
 CONF_TAX_PERCENT = "tax_percent"
 CONF_WEATHER_ENTITY = "weather_entity"
 CONF_DAILY_USAGE = "daily_usage"
+CONF_WEATHER_STATION = "weather_station"
+CONF_GCR_RATE = "gcr_rate"
+CONF_URI_SURCHARGE = "uri_surcharge"
+CONF_AUTO_FETCH_GCR = "auto_fetch_gcr"
 
+# Attributes
 ATTR_USAGE = "usage"
 ATTR_AMOUNT_DUE = "amount_due"
 ATTR_DUE_DATE = "due_date"

@@ -11,7 +11,7 @@ A custom component for Home Assistant to retrieve usage data from [Atmos Energy]
 
 ## ✨ Features
 - **Usage Tracking**: Monitor your gas consumption for the current billing period (Daily accounts) or previous cycle (Monthly accounts).
-- **Cost Estimation**: Real-time cost tracking based on your specific utility rates, fixed fees, and local taxes.
+- **Advanced Cost Prediction (Mid-Tex Only)**: High-accuracy bill forecasting using Weather Normalization Adjustment (WNA) and automated Gas Cost Recovery (GCR) rate fetching.
 - **Smart Predictions**: 7-day gas usage and cost forecasts driven by local weather data and a personalized heating model.
 - **Energy Dashboard Ready**: Fully compatible with the Home Assistant Energy Dashboard for long-term tracking.
 - **Automated Modeling**: Automatically learns your home's heating efficiency by analyzing historical usage and temperature data.
@@ -21,15 +21,15 @@ A custom component for Home Assistant to retrieve usage data from [Atmos Energy]
 This integration provides different sensors depending on your account type (Daily vs Monthly).
 
 ### Daily Usage Mode (Standard)
-*Enabled by checking "provides daily usage data" during setup.*
+*Enabled by checking "Enable advanced cost prediction" during setup.*
 
 | Sensor | Description | Class |
 | :--- | :--- | :--- |
 | **Gas usage (Current)** | Total usage (CCF) for the current billing period. | `total_increasing` |
-| **Estimated cost** | Calculated cost for the current period (including tax/fixed fees). | `total` |
-| **Days remaining** | Estimated days left in the 30-day billing cycle. | `measurement` |
-| **Predicted Usage (7d)** | Estimated gas usage for the next 7 days based on weather. | `total` |
-| **Predicted Cost (7d)** | Estimated gas cost for the next 7 days based on weather. | `total` |
+| **Estimated cost** | Calculated cost for the current period (including WNA, GCR, tax, and fixed fees). | `total` |
+| **Days remaining** | Precise days left in your billing cycle (parsed from the Atmos portal). | `measurement` |
+| **Predicted Usage (7d)** | Estimated gas usage for the next 7 days based on weather forecast. | `total` |
+| **Predicted Cost (7d)** | Estimated gas cost for the next 7 days based on weather forecast. | `total` |
 
 ### Monthly Usage Mode
 *Used if your account does not provide granular daily data.*
@@ -40,47 +40,17 @@ This integration provides different sensors depending on your account type (Dail
 
 ---
 
-## Predictive Usage Feature
+## ❄️ Advanced Prediction (Mid-Tex Region)
 
-This integration includes an **automatic machine learning system** that learns your home's 
-heating characteristics over time.
+Billing for natural gas is complex. In the **Mid-Tex region** (Austin, Dallas, Waco, etc.), Atmos Energy applies a **Weather Normalization Adjustment (WNA)** to level out the impact of unusually warm or cold weather.
 
-### How It Works
+### How v0.7.0 Improves Accuracy
+This integration now delivers ~95% cost accuracy for Mid-Tex customers by:
+1. **Automated GCR Rates**: Automatically fetches the latest monthly Gas Cost Recovery (GCR) rates from Atmos Energy's official filings.
+2. **Real-time WNA Calculation**: Uses the official Atmos tariff formula combined with your local weather forecast to estimate your bill's weather adjustment before it arrives.
+3. **Precise Cycle Tracking**: Parses your actual "Next Meter Read Date" from the portal to accurately project usage for the remainder of the month.
 
-1. **Data Collection**: Every 12 hours, the integration downloads your daily usage and 
-   temperature data from Atmos Energy.
-   
-2. **Smart Modeling**: The system analyzes your history to automatically figure out:
-   - **Base Load**: Your baseline gas usage (for things like water heating and cooking).
-   - **Heating Efficiency**: How much extra gas you use for every degree it gets colder.
-   - **Tipping Point**: The specific outside temperature where your heater usually kicks in (the "balance temperature").
-   
-3. **Predictions**: Based on weather forecasts, the system predicts your gas usage and 
-   cost for the next 7 days.
-
-### Model Accuracy
-
-- **First 10 days**: Uses standard estimates (~70% accurate).
-- **After 30 days**: Personalized to your specific home (~85-90% accurate).
-- **After 90 days**: Highly accurate, personalized predictions (~90-95% accurate).
-
-### Viewing Your Model
-
-Your home's learned characteristics are visible in the sensor attributes:
-- `base_load`: Your typical daily usage when the heater is off.
-- `heating_coefficient`: Extra gas used per degree of cold.
-- `balance_temperature`: The temperature at which your home starts needing heat.
-- `r_squared`: An accuracy score (0.0 to 1.0) showing how well the model matches your real-world data.
-
-### Privacy
-
-All learning happens **locally on your Home Assistant instance**. No data is sent to 
-external servers for processing.
-
-### Requirements
-To enable predictions, you must:
-1. Enable **Daily Usage** during configuration.
-2. Select a **Weather Entity** (e.g., `weather.home`) in the Integration Options.
+**Note**: Due to significant differences in billing formulas and regional tariffs, advanced prediction is currently only available for the **Mid-Tex region**. Customers in other regions will still see usage data and basic cost estimates.
 
 ---
 
@@ -104,16 +74,16 @@ To enable predictions, you must:
 
 1. Go to **Settings > Devices & Services** > **Add Integration** > **Atmos Energy**.
 2. Enter your **Username** and **Password**.
-3. **Daily Usage Check**: Only uncheck this if your Atmos portal does *not* show a "Daily Usage" chart.
+3. **Enable Advanced Cost Prediction**: Select this if you are a Mid-Tex customer and want high-accuracy billing forecasts.
 
-### Fine-Tuning Accuracy (Options)
-Click **Configure** on the Atmos Energy card to adjust:
-*   **Fixed Cost**: The base monthly customer charge (e.g., $25.03).
-*   **Usage Rate ($/CCF)**: The total of all per-unit charges (Distribution + Pipeline + Gas Cost).
-*   **Tax Percent**: Your local sales tax (e.g., 8.25%).
-*   **Weather Entity**: Required for the 7-day prediction features.
+### Configuration Wizard
+If advanced prediction is enabled, you will be guided through:
+*   **Weather Station**: Select the station Atmos uses for your billing area (e.g., Dallas, Austin).
+*   **Rates**: Enter your consumption rate and fixed fees (defaults provided).
+*   **GCR Auto-fetch**: Enable this to automatically track monthly gas price fluctuations.
+*   **Weather Entity**: Select a local weather source (e.g., `weather.home`) for 7-day forecasting.
 
 ## 🔍 Troubleshooting
-- **Frequency**: Data is fetched every **12 hours** to avoid overwhelming the portal.
+- **Frequency**: Data is fetched daily at 7 AM (aligned with Atmos's data refresh) to minimize portal load.
 - **Login Issues**: Ensure you can log in to [Atmos Energy](https://www.atmosenergy.com/) directly and have accepted any new Terms of Service.
-- **Sensor Errors**: If sensors show `None`, check the logs for "Authentication Error" or "Data Parsing Error".
+- **GCR Fetching**: If the integration cannot fetch the latest rate PDF, it will fall back to your manually entered GCR rate and log a warning.

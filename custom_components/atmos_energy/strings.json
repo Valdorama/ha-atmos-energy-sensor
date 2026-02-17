@@ -2,22 +2,38 @@
     "config": {
         "step": {
             "user": {
-                "title": "Atmos Energy",
-                "description": "Enter your Atmos Energy account credentials",
+                "title": "Atmos Energy Account",
+                "description": "Enter your Atmos Energy credentials. The advanced cost prediction feature is currently only available for customers in the Mid-Tex region.",
                 "data": {
                     "username": "Username",
                     "password": "Password",
-                    "daily_usage": "My account provides daily usage data (Current Billing Period)"
+                    "daily_usage": "Enable advanced cost prediction (Mid-Tex Only)"
+                }
+            },
+            "weather_station": {
+                "title": "Region Selection",
+                "description": "Select the weather station Atmos Energy uses for your area to ensure accurate weather normalization calculations.",
+                "data": {
+                    "weather_station": "Weather Station"
                 }
             },
             "cost": {
-                "title": "Cost & Prediction Configuration",
-                "description": "Configure rates and weather source for usage prediction. Note: The Gas usage sensor tracks usage for the current billing period.",
+                "title": "Rates & Surcharges",
+                "description": "Configure your billing rates. These can usually be found on your latest Atmos Energy bill.",
                 "data": {
                     "fixed_cost": "Fixed Monthly Cost ($)",
-                    "usage_rate": "Usage Rate ($/CCF)",
-                    "tax_percent": "Tax Percentage (%)",
-                    "weather_entity": "Weather Entity for Predicted Usage/Cost (Optional)"
+                    "usage_rate": "Consumption Rate ($/CCF)",
+                    "auto_fetch_gcr": "Auto-fetch current GCR rates",
+                    "gcr_rate": "GCR Rate ($/CCF) (fallback)",
+                    "uri_surcharge": "URI Surcharge ($/CCF)",
+                    "tax_percent": "Tax Percentage (%)"
+                }
+            },
+            "weather_forecast": {
+                "title": "Forecast Integration",
+                "description": "Select a weather entity to provide temperature forecasts. This allows the integration to predict your usage for the remainder of the billing cycle.",
+                "data": {
+                    "weather_entity": "Weather Entity"
                 }
             },
             "reauth": {
@@ -42,14 +58,37 @@
         "step": {
             "init": {
                 "title": "Atmos Energy Options",
-                "description": "Configure credentials, rates, and prediction settings.",
+                "description": "Update your credentials or toggle the prediction feature.",
                 "data": {
                     "username": "Username",
                     "password": "Password",
+                    "daily_usage": "Enable advanced cost prediction (Mid-Tex Only)"
+                }
+            },
+            "weather_station": {
+                "title": "Region Selection",
+                "description": "Update the weather station for your area.",
+                "data": {
+                    "weather_station": "Weather Station"
+                }
+            },
+            "cost": {
+                "title": "Rates & Surcharges",
+                "description": "Update your billing rates and surcharges.",
+                "data": {
                     "fixed_cost": "Fixed Monthly Cost ($)",
-                    "usage_rate": "Usage Rate ($/CCF)",
-                    "tax_percent": "Tax Percentage (%)",
-                    "weather_entity": "Weather Entity for Predicted Usage/Cost (Optional)"
+                    "usage_rate": "Consumption Rate ($/CCF)",
+                    "auto_fetch_gcr": "Auto-fetch current GCR rates",
+                    "gcr_rate": "GCR Rate ($/CCF) (fallback)",
+                    "uri_surcharge": "URI Surcharge ($/CCF)",
+                    "tax_percent": "Tax Percentage (%)"
+                }
+            },
+            "weather_forecast": {
+                "title": "Forecast Integration",
+                "description": "Update the weather entity used for forecasting.",
+                "data": {
+                    "weather_entity": "Weather Entity"
                 }
             }
         }

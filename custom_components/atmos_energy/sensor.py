@@ -2,29 +2,19 @@ import logging
 from typing import Any
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceNotFound
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.const import (
     CONF_USERNAME,
-    EVENT_HOMEASSISTANT_STARTED,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
 )
-from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.components.weather import (
-    ATTR_FORECAST_NATIVE_TEMP,
-    ATTR_FORECAST_NATIVE_TEMP_LOW,
-)
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN, 
     ATTR_USAGE, 
-    ATTR_AMOUNT_DUE, 
     ATTR_DUE_DATE, 
     ATTR_BILL_DATE,
-    ATTR_BILLING_PERIOD_START,
     CONF_WEATHER_ENTITY,
     CONF_DAILY_USAGE,
     ATTR_METER_READ_DATE,
@@ -51,8 +41,8 @@ async def async_setup_entry(
 
         weather_entity = entry.options.get(CONF_WEATHER_ENTITY)
         if weather_entity:
-            entities.append(AtmosEnergyPredictedUsageSensor(coordinator, entry, account_id, weather_entity))
-            entities.append(AtmosEnergyPredictedCostSensor(coordinator, entry, account_id, weather_entity))
+            entities.append(AtmosEnergyPredictedUsageSensor(coordinator, entry, account_id))
+            entities.append(AtmosEnergyPredictedCostSensor(coordinator, entry, account_id))
     else:
         entities = [
             AtmosEnergyMonthlyUsageSensor(coordinator, entry, account_id),
@@ -114,18 +104,12 @@ class AtmosEnergyUsageSensor(AtmosEnergyBaseSensor):
         return {
             "account_id": self._account_id,
             "last_reading_date": self.coordinator.data.get(ATTR_BILL_DATE),
-            "last_reset": self._get_last_reset(),
+            "last_reset": self.coordinator.data.get("billing_period_start"),
         }
-
-    def _get_last_reset(self):
-        """Estimate the last reset date (start of current billing cycle)."""
-        if not self.coordinator.data:
-            return None
-        return self.coordinator.data.get("billing_period_start")
 
 
 class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
-    """Representation of an Atmos Energy Cost Sensor."""
+    """Representation of an Atmos Energy Cost Sensor with WNA."""
 
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
@@ -141,7 +125,7 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
 
     @property
     def native_value(self):
-        """Return the estimated cost."""
+        """Return the estimated cost with WNA."""
         if not self.coordinator.data:
             return None
             
@@ -149,30 +133,57 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
         if usage is None:
             return None
         
-        # Get options or defaults
+        # Base costs
         fixed = self._entry.options.get("fixed_cost", 25.03)
-        rate = self._entry.options.get("usage_rate", 2.40)
+        consumption_rate = self._entry.options.get("usage_rate", 0.78)
+        base_usage_cost = fixed + (float(usage) * consumption_rate)
+        
+        # Get pre-calculated WNA charge from coordinator
+        wna_info = self.coordinator.data.get("wna_calculated", {})
+        wna_charge = wna_info.get("wna_charge", 0.0)
+        
+        # GCR charge (auto-fetched or manual fallback)
+        gcr_rate = self.coordinator.current_gcr_rate or self._entry.options.get("gcr_rate", 1.17)
+        gcr_charge = float(usage) * gcr_rate
+        
+        # URI surcharge
+        uri_rate = self._entry.options.get("uri_surcharge", 0.018431)
+        uri_charge = float(usage) * uri_rate
+        
+        # Total before tax
+        subtotal = base_usage_cost + wna_charge + gcr_charge + uri_charge
+        
+        # Tax
         tax_pct = self._entry.options.get("tax_percent", 8.0)
-        
-        # Calculation
-        # Base = Fixed + (Usage * Rate)
-        # Total = Base * (1 + Tax/100)
-        
-        base_cost = fixed + (float(usage) * rate)
-        total_cost = base_cost * (1 + (tax_pct / 100.0))
+        total_cost = subtotal * (1 + (tax_pct / 100.0))
         
         return round(total_cost, 2)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the state attributes."""
+        """Return the state attributes with breakdown."""
         if not self.coordinator.data:
             return {"account_id": self._account_id}
             
+        usage = self.coordinator.data.get(ATTR_USAGE, 0)
+        wna_info = self.coordinator.data.get("wna_calculated", {})
+        
+        # GCR details
+        gcr_rate = self.coordinator.current_gcr_rate or self._entry.options.get("gcr_rate", 1.17)
+        gcr_source = "auto-fetched" if self.coordinator.current_gcr_rate else "manual"
+        gcr_last_updated = self.coordinator.gcr_fetcher._last_fetch if gcr_source == "auto-fetched" else None
+
         return {
             "account_id": self._account_id,
             "due_date": self.coordinator.data.get(ATTR_DUE_DATE),
-            "formula": f"({self._entry.options.get('fixed_cost',25.03)} + (usage * {self._entry.options.get('usage_rate',2.40)})) * {1 + self._entry.options.get('tax_percent',8.0)/100}"
+            "wna_breakdown": wna_info,
+            "gcr_breakdown": {
+                "rate": f"${gcr_rate:.4f}/CCF",
+                "charge": round(float(usage) * gcr_rate, 2),
+                "source": gcr_source,
+                "last_updated": gcr_last_updated.isoformat() if gcr_last_updated else None,
+            },
+            "formula": f"(Fixed + (Usage * {self._entry.options.get('usage_rate',0.78)}) + WNA + GCR + URI) * {1 + self._entry.options.get('tax_percent',8.0)/100}"
         }
 
 
@@ -196,43 +207,31 @@ class AtmosEnergyDaysRemainingSensor(AtmosEnergyBaseSensor):
         if not self.coordinator.data:
             return None
             
+        next_read_dt = self.coordinator.data.get("next_meter_read_dt")
+        
+        if next_read_dt:
+            try:
+                localized_next = dt_util.as_local(next_read_dt)
+                now = dt_util.now()
+                remaining = (localized_next - now).days
+                return max(0, remaining)
+            except Exception as e:
+                _LOGGER.debug("Error localized date in sensor: %s", e)
+        
+        # Fallback to start_date + 30 days
         start_date_str = self.coordinator.data.get(ATTR_BILLING_PERIOD_START)
-        if not start_date_str:
-            return None
-            
-        try:
-            from datetime import datetime, timedelta
-            from homeassistant.util import dt as dt_util
-            
-            # Pandas dates often look like '2026-02-01 00:00:00' or '2026-02-01'
-            # dt_util.parse_datetime handles most common ISO formats
-            start_date = dt_util.parse_datetime(start_date_str)
-            if not start_date:
-                # Fallback to common formats seen in Atmos XLS
-                for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
-                    try:
-                        start_date = datetime.strptime(start_date_str.split()[0], fmt)
-                        break
-                    except ValueError:
-                        continue
-            
-            if not start_date:
-                return None
-            
-            # Ensure start_date is aware if it's not
-            if start_date.tzinfo is None:
-                start_date = dt_util.as_local(start_date)
+        if start_date_str:
+            try:
+                start_date = dt_util.parse_datetime(start_date_str)
+                if start_date:
+                    localized_start = dt_util.as_local(start_date)
+                    target_date = localized_start + timedelta(days=30)
+                    remaining = (target_date - dt_util.now()).days
+                    return max(0, remaining)
+            except Exception:
+                pass
                 
-            now = dt_util.now()
-            
-            # Assume 30 day billing cycle from the start date
-            target_date = start_date + timedelta(days=30)
-            remaining = (target_date - now).days
-            
-            return max(0, remaining)
-        except Exception as e:
-            _LOGGER.error("Error calculating remaining days from '%s': %s", start_date_str, e)
-            return None
+        return None
 
 
 class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
@@ -244,134 +243,31 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
     _attr_name = "Predicted Gas Usage (Next 7 Days)"
     _attr_suggested_object_id = f"{DOMAIN}_predicted_usage_7d"
     _attr_icon = "mdi:chart-bell-curve"
-    _attr_should_poll = True
 
-    def __init__(self, coordinator, entry: ConfigEntry, account_id: str, weather_entity: str):
+    def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
         super().__init__(coordinator, entry, account_id)
-        self._weather_entity = weather_entity
         self._attr_unique_id = f"{DOMAIN}_{account_id}_predicted_usage_7d"
-        self._last_forecast_value = None
 
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        
-        # Listen for Home Assistant started event to retry update
-        self.async_on_remove(
-            self.hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STARTED, self._handle_startup
-            )
-        )
-        
-        # Set up periodic refresh every 6 hours instead of state tracking
-        # Predictions only need updating when forecast changes (2-4x per day)
-        async def _periodic_update(_now):
-            await self.async_update()
-            self.async_write_ha_state()
-        
-        # Update every 6 hours instead of on every weather state change
-        from datetime import timedelta
-        self.async_on_remove(
-            async_track_time_interval(self.hass, _periodic_update, timedelta(hours=6))
-        )
-
-        # Initial update
-        await self.async_update()
-        self.async_write_ha_state()
-
-    async def _handle_startup(self, _event):
-        """Handle Home Assistant started."""
-        _LOGGER.debug("Home Assistant started, refreshing Atmos predictions")
-        await self.async_update()
-        self.async_write_ha_state()
+    @property
+    def native_value(self):
+        """Return the state of the sensor from pre-calculated coordinator data."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("predicted_usage_7d")
 
     @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
-        attrs = {
+        return {
             "base_load": self.coordinator.base_load,
             "heating_coefficient": self.coordinator.heating_coeff,
             "balance_temperature": self.coordinator.balance_temp,
             "r_squared": self.coordinator.r_squared,
         }
-        return attrs
 
-    async def async_update(self):
-        """Update the sensor using the weather service."""
-        # Note: We do NOT call super().async_update() here because that triggers the 
-        # DataUpdateCoordinator which fetches expensive XLS data.
-        # This sensor updates independently based on weather data.
-        
-        _LOGGER.debug("Updating predicted usage sensor using %s", self._weather_entity)
-        try:
-            # Check if weather entity exists to avoid errors
-            state = self.hass.states.get(self._weather_entity)
-            if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                if self._last_forecast_value is not None:  # Only log warning once if it disappears
-                    _LOGGER.warning("Weather entity %s not found or unavailable, disabling predictions", self._weather_entity)
-                    self._last_forecast_value = None
-                else:
-                    _LOGGER.debug("Weather entity %s not yet ready", self._weather_entity)
-                return
 
-            response = await self.hass.services.async_call(
-                "weather",
-                "get_forecasts",
-                {"type": "daily", "entity_id": self._weather_entity},
-                blocking=True,
-                return_response=True,
-            )
-            
-            _LOGGER.debug("Forecast response for %s: %s", self._weather_entity, response)
-            
-            if not response or self._weather_entity not in response:
-                _LOGGER.warning("No forecast response for %s", self._weather_entity)
-                return
-
-            forecast_data = response[self._weather_entity].get("forecast", [])
-            if not forecast_data:
-                _LOGGER.warning("Empty forecast data for %s", self._weather_entity)
-                return
-            
-            total_ccf = 0.0
-            
-            # Use dynamic coefficients from coordinator
-            base_load = self.coordinator.base_load
-            heating_coeff = self.coordinator.heating_coeff
-            
-            balance_temp = self.coordinator.balance_temp
-            
-            # Calculate for next 7 days
-            for day in forecast_data[:7]:
-                # Try native keys first, fall back to standard keys
-                high = day.get(ATTR_FORECAST_NATIVE_TEMP) or day.get("temperature")
-                low = day.get(ATTR_FORECAST_NATIVE_TEMP_LOW) or day.get("templow")
-                
-                if high is not None and low is not None:
-                    avg_temp = (float(high) + float(low)) / 2
-                    hdd = max(0, balance_temp - avg_temp)
-                    daily_usage = base_load + (heating_coeff * hdd)
-                    total_ccf += daily_usage
-                else:
-                    _LOGGER.debug("Skipping day in forecast due to missing temp data: %s", day)
-            
-            self._last_forecast_value = round(total_ccf, 2)
-            _LOGGER.debug("Predicted 7-day usage: %s CCF", self._last_forecast_value)
-            
-        except ServiceNotFound:
-            _LOGGER.error("Weather service not available, disabling predictions")
-            self._last_forecast_value = None
-        except Exception as e:
-            _LOGGER.error("Error updating gas prediction from %s: %s", self._weather_entity, e, exc_info=True)
-            # Keep last value instead of None to avoid constant errors if it's just a temporary glitch
-
-    @property
-    def native_value(self):
-        """Return the state of the sensor."""
-        return self._last_forecast_value
-
-class AtmosEnergyPredictedCostSensor(AtmosEnergyPredictedUsageSensor):
+class AtmosEnergyPredictedCostSensor(AtmosEnergyBaseSensor):
     """Sensor that predicts gas cost for the next 7 days."""
 
     _attr_device_class = SensorDeviceClass.MONETARY
@@ -381,24 +277,23 @@ class AtmosEnergyPredictedCostSensor(AtmosEnergyPredictedUsageSensor):
     _attr_suggested_object_id = f"{DOMAIN}_predicted_cost_7d"
     _attr_icon = "mdi:currency-usd"
 
-    def __init__(self, coordinator, entry: ConfigEntry, account_id: str, weather_entity: str):
+    def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
-        # This inherits logic from usage sensor, but applies rate at the end
-        super().__init__(coordinator, entry, account_id, weather_entity)
+        super().__init__(coordinator, entry, account_id)
         self._attr_unique_id = f"{DOMAIN}_{account_id}_predicted_cost_7d"
 
     @property
     def native_value(self):
         """Return the estimated cost."""
-        usage = super().native_value
+        if not self.coordinator.data:
+            return None
+            
+        usage = self.coordinator.data.get("predicted_usage_7d")
         if usage is None:
             return None
         
-        rate = self._entry.options.get("usage_rate", 2.40)
-        # Note: We don't include fixed costs here as those are monthly/per-bill
-        # We also don't include tax yet as that applies to the total bill, 
-        # but for simple "next 7 days cost" usage * rate is the most useful metric.
-        
+        # Prediction cost logic: usage * current rate
+        rate = self._entry.options.get("usage_rate", 0.78)
         return round(usage * rate, 2)
 
 
@@ -437,4 +332,3 @@ class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
             ATTR_AVG_TEMP: self.coordinator.data.get(ATTR_AVG_TEMP),
             ATTR_BILLING_MONTH: self.coordinator.data.get(ATTR_BILLING_MONTH),
         }
-
