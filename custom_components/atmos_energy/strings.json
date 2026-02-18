@@ -21,12 +21,12 @@
                 "title": "Rates & Surcharges",
                 "description": "Configure your billing rates. These can usually be found on your latest Atmos Energy bill.",
                 "data": {
-                    "fixed_cost": "Fixed Monthly Cost ($)",
-                    "usage_rate": "Consumption Rate ($/CCF)",
+                    "fixed_cost": "Customer Charge ($)",
+                    "usage_rate": "Consump Chrg Rate ($/CCF)",
                     "auto_fetch_gcr": "Auto-fetch current GCR rates",
-                    "gcr_rate": "GCR Rate ($/CCF) (fallback)",
-                    "uri_surcharge": "URI Surcharge ($/CCF)",
-                    "tax_percent": "Tax Percentage (%)"
+                    "gcr_rate": "Rider GCR Rate ($/CCF) (fallback)",
+                    "uri_surcharge": "Winter Storm Uri Surcharge ($/CCF)",
+                    "tax_percent": "Taxes & Fees Percentage (%)"
                 }
             },
             "weather_forecast": {
@@ -76,12 +76,12 @@
                 "title": "Rates & Surcharges",
                 "description": "Update your billing rates and surcharges.",
                 "data": {
-                    "fixed_cost": "Fixed Monthly Cost ($)",
-                    "usage_rate": "Consumption Rate ($/CCF)",
+                    "fixed_cost": "Customer Charge ($)",
+                    "usage_rate": "Consump Chrg Rate ($/CCF)",
                     "auto_fetch_gcr": "Auto-fetch current GCR rates",
-                    "gcr_rate": "GCR Rate ($/CCF) (fallback)",
-                    "uri_surcharge": "URI Surcharge ($/CCF)",
-                    "tax_percent": "Tax Percentage (%)"
+                    "gcr_rate": "Rider GCR Rate ($/CCF) (fallback)",
+                    "uri_surcharge": "Winter Storm Uri Surcharge ($/CCF)",
+                    "tax_percent": "Taxes & Fees Percentage (%)"
                 }
             },
             "weather_forecast": {

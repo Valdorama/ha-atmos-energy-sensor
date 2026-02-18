@@ -105,11 +105,11 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_FIXED_COST, default=25.03): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                    vol.Required(CONF_USAGE_RATE, default=0.78): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                    vol.Required(CONF_USAGE_RATE, default=0.78025): vol.All(vol.Coerce(float), vol.Range(min=0)),
                     vol.Required(CONF_AUTO_FETCH_GCR, default=True): bool,
-                    vol.Required(CONF_GCR_RATE, default=1.17): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                    vol.Required(CONF_URI_SURCHARGE, default=0.018431): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                    vol.Required(CONF_TAX_PERCENT, default=8.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+                    vol.Required(CONF_GCR_RATE, default=1.16939): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                    vol.Required(CONF_URI_SURCHARGE, default=0.01843): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                    vol.Required(CONF_TAX_PERCENT, default=8.08): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
                 }
             ),
         )
@@ -245,11 +245,11 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
             step_id="cost",
             data_schema=vol.Schema({
                 vol.Required(CONF_FIXED_COST, default=self._options.get(CONF_FIXED_COST, 25.03)): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Required(CONF_USAGE_RATE, default=self._options.get(CONF_USAGE_RATE, 0.78)): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                vol.Required(CONF_USAGE_RATE, default=self._options.get(CONF_USAGE_RATE, 0.78025)): vol.All(vol.Coerce(float), vol.Range(min=0)),
                 vol.Required(CONF_AUTO_FETCH_GCR, default=self._options.get(CONF_AUTO_FETCH_GCR, True)): bool,
-                vol.Required(CONF_GCR_RATE, default=self._options.get(CONF_GCR_RATE, 1.17)): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Required(CONF_URI_SURCHARGE, default=self._options.get(CONF_URI_SURCHARGE, 0.018431)): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Required(CONF_TAX_PERCENT, default=self._options.get(CONF_TAX_PERCENT, 8.0)): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+                vol.Required(CONF_GCR_RATE, default=self._options.get(CONF_GCR_RATE, 1.16939)): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                vol.Required(CONF_URI_SURCHARGE, default=self._options.get(CONF_URI_SURCHARGE, 0.01843)): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                vol.Required(CONF_TAX_PERCENT, default=self._options.get(CONF_TAX_PERCENT, 8.08)): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
             }),
         )
 

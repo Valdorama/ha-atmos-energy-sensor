@@ -44,13 +44,15 @@ This integration provides different sensors depending on your account type (Dail
 
 Billing for natural gas is complex. In the **Mid-Tex region** (Austin, Dallas, Waco, etc.), Atmos Energy applies a **Weather Normalization Adjustment (WNA)** to level out the impact of unusually warm or cold weather.
 
-### How v0.7.0 Improves Accuracy
-This integration now delivers ~95% cost accuracy for Mid-Tex customers by:
+### Precision & Accuracy (v0.7.x)
+This integration delivers high cost accuracy for Mid-Tex customers by:
 1. **Automated GCR Rates**: Automatically fetches the latest monthly Gas Cost Recovery (GCR) rates from Atmos Energy's official filings.
-2. **Real-time WNA Calculation**: Uses the official Atmos tariff formula combined with your local weather forecast to estimate your bill's weather adjustment before it arrives.
-3. **Precise Cycle Tracking**: Parses your actual "Next Meter Read Date" from the portal to accurately project usage for the remainder of the month.
+2. **Real-time WNA Calculation**: Uses the official Atmos tariff formula combined with your local weather forecast to estimate your bill's weather adjustment.
+3. **Bill Alignment (v0.7.1)**: Sensor attributes and configuration labels are mapped 1:1 to the terminology on your actual Atmos bill (e.g., "Consump Chrg", "Rider GCR").
+4. **Pro-rated Forecasts (v0.7.1)**: Fixed monthly fees are pro-rated across the 7-day prediction for a more realistic marginal cost forecast.
+5. **Precise Cycle Tracking**: Parses your actual "Next Meter Read Date" from the portal.
 
-**Note**: Due to significant differences in billing formulas and regional tariffs, advanced prediction is currently only available for the **Mid-Tex region**. Customers in other regions will still see usage data and basic cost estimates.
+**Note**: Due to significant differences in billing formulas and regional tariffs, advanced prediction is currently only available for the **Mid-Tex region**.
 
 ---
 

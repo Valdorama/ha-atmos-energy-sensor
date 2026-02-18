@@ -318,7 +318,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                         
                         if high is not None and low is not None:
                             avg_temp = (float(high) + float(low)) / 2
-                            daily_hdd = max(0, 65 - avg_temp)
+                            daily_hdd = max(0, self.balance_temp - avg_temp)
                             forecast_hdd += daily_hdd
                     
                     # If forecast doesn't cover all remaining days, extrapolate
@@ -386,6 +386,59 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("Error calculating 7-day predicted usage: %s", e)
             return None
 
+    def calculate_total_cost(
+        self, 
+        usage: float, 
+        include_fixed: bool = True, 
+        wna_charge: float = 0.0,
+        pro_rate_days: int | None = None
+    ) -> dict[str, Any]:
+        """Centralized cost calculation logic. Returns detailed breakdown."""
+        options = self.config_entry.options
+        
+        # Base fixed and consumption rate
+        fixed = float(options.get("fixed_cost", 25.03)) if include_fixed else 0.0
+        if include_fixed and pro_rate_days is not None:
+             fixed = (fixed * pro_rate_days) / 30.0
+             
+        consumption_rate = float(options.get("usage_rate", 0.78))
+        consumption_charge = usage * consumption_rate
+        
+        # GCR charge
+        gcr_rate = float(self.current_gcr_rate or options.get("gcr_rate", 1.17))
+        gcr_charge = usage * gcr_rate
+        
+        # URI surcharge
+        uri_rate = float(options.get("uri_surcharge", 0.018431))
+        uri_charge = usage * uri_rate
+        
+        # Subtotal before tax
+        subtotal = fixed + consumption_charge + wna_charge + gcr_charge + uri_charge
+        
+        # Tax
+        tax_pct = float(options.get("tax_percent", 8.0))
+        tax_amount = subtotal * (tax_pct / 100.0)
+        total_cost = subtotal + tax_amount
+        
+        return {
+            "total": round(total_cost, 2),
+            "breakdown": {
+                "fixed_charge": round(fixed, 2),
+                "consumption_charge": round(consumption_charge, 2),
+                "gcr_charge": round(gcr_charge, 2),
+                "wna_charge": round(wna_charge, 2),
+                "uri_charge": round(uri_charge, 2),
+                "tax_amount": round(tax_amount, 2),
+                "subtotal": round(subtotal, 2),
+                "rates": {
+                    "consumption": consumption_rate,
+                    "gcr": round(gcr_rate, 4),
+                    "uri": uri_rate,
+                    "tax": tax_pct,
+                }
+            }
+        }
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
         if not self._history:
@@ -429,6 +482,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 data["wna_calculated"] = {
                     "wnaf_rate": f"${wnaf_cents/100:.6f}/CCF",
+                    "wnaf_rate_raw": wnaf_cents / 100.0,
                     "wna_charge": wna_charge,
                     "ndd": self.wna_calculator.get_ndd_for_month(billing_month),
                     "add_projected": projected_add,
@@ -437,7 +491,29 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 }
                 
                 # Calculate 7-day prediction once
-                data["predicted_usage_7d"] = await self._calculate_predicted_usage_7d()
+                predicted_usage_7d = await self._calculate_predicted_usage_7d()
+                data["predicted_usage_7d"] = predicted_usage_7d
+                
+                # NEW: Calculate 7-day predicted cost using the same logic
+                if predicted_usage_7d is not None:
+                    # Apply the current billing cycle's WNA rate to the prediction
+                    # This provides the most consistent "forward looking" estimate
+                    wnaf_rate = wnaf_cents / 100.0
+                    p_wna_charge = predicted_usage_7d * wnaf_rate
+                    
+                    cost_data = self.calculate_total_cost(
+                        predicted_usage_7d, 
+                        include_fixed=True, 
+                        wna_charge=p_wna_charge,
+                        pro_rate_days=7
+                    )
+                    
+                    # Store breakdown for sensor attributes
+                    breakdown = cost_data["breakdown"]
+                    breakdown["rates"]["wna"] = round(wnaf_rate, 6)
+                    
+                    data["predicted_cost_7d"] = cost_data["total"]
+                    data["predicted_cost_7d_breakdown"] = breakdown
 
             # Update History if available
             new_history = data.get("history", [])

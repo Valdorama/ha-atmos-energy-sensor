@@ -133,57 +133,59 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
         if usage is None:
             return None
         
-        # Base costs
-        fixed = self._entry.options.get("fixed_cost", 25.03)
-        consumption_rate = self._entry.options.get("usage_rate", 0.78)
-        base_usage_cost = fixed + (float(usage) * consumption_rate)
-        
         # Get pre-calculated WNA charge from coordinator
         wna_info = self.coordinator.data.get("wna_calculated", {})
         wna_charge = wna_info.get("wna_charge", 0.0)
         
-        # GCR charge (auto-fetched or manual fallback)
-        gcr_rate = self.coordinator.current_gcr_rate or self._entry.options.get("gcr_rate", 1.17)
-        gcr_charge = float(usage) * gcr_rate
-        
-        # URI surcharge
-        uri_rate = self._entry.options.get("uri_surcharge", 0.018431)
-        uri_charge = float(usage) * uri_rate
-        
-        # Total before tax
-        subtotal = base_usage_cost + wna_charge + gcr_charge + uri_charge
-        
-        # Tax
-        tax_pct = self._entry.options.get("tax_percent", 8.0)
-        total_cost = subtotal * (1 + (tax_pct / 100.0))
-        
-        return round(total_cost, 2)
+        # Use centralized cost calculation
+        cost_data = self.coordinator.calculate_total_cost(
+            float(usage), 
+            include_fixed=True, 
+            wna_charge=wna_charge
+        )
+        return cost_data["total"]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the state attributes with breakdown."""
+        """Return the state attributes with user-friendly breakdown."""
         if not self.coordinator.data:
             return {"account_id": self._account_id}
             
         usage = self.coordinator.data.get(ATTR_USAGE, 0)
         wna_info = self.coordinator.data.get("wna_calculated", {})
         
-        # GCR details
-        gcr_rate = self.coordinator.current_gcr_rate or self._entry.options.get("gcr_rate", 1.17)
+        # Recalculate cost data to get breakdown
+        cost_data = self.coordinator.calculate_total_cost(
+            float(usage), 
+            include_fixed=True, 
+            wna_charge=wna_info.get("wna_charge", 0.0)
+        )
+        b = cost_data["breakdown"]
+        r = b["rates"]
+
+        # GCR source info
         gcr_source = "auto-fetched" if self.coordinator.current_gcr_rate else "manual"
         gcr_last_updated = self.coordinator.gcr_fetcher._last_fetch if gcr_source == "auto-fetched" else None
 
         return {
             "account_id": self._account_id,
             "due_date": self.coordinator.data.get(ATTR_DUE_DATE),
-            "wna_breakdown": wna_info,
-            "gcr_breakdown": {
-                "rate": f"${gcr_rate:.4f}/CCF",
-                "charge": round(float(usage) * gcr_rate, 2),
-                "source": gcr_source,
-                "last_updated": gcr_last_updated.isoformat() if gcr_last_updated else None,
+            "cost_breakdown": {
+                "Customer Charge": f"${b['fixed_charge']:.2f}",
+                "Consump Chrg": f"${b['consumption_charge']:.2f} (@ ${r['consumption']:.5f})",
+                "Rider GCR": f"${b['gcr_charge']:.2f} (@ ${r['gcr']:.5f})",
+                "Rider WNA": f"${b['wna_charge']:.2f} (@ {wna_info.get('wnaf_rate', '$0.00/CCF')})",
+                "Winter Storm Uri Surcharge": f"${b['uri_charge']:.2f} (@ ${r['uri']:.5f})",
+                "Subtotal": f"${b['subtotal']:.2f}",
+                "TAX/FEE CHARGE TOTAL": f"${b['tax_amount']:.2f} ({r['tax']:.2f}%)",
             },
-            "formula": f"(Fixed + (Usage * {self._entry.options.get('usage_rate',0.78)}) + WNA + GCR + URI) * {1 + self._entry.options.get('tax_percent',8.0)/100}"
+            "wna_details": {
+                "Historical Normal HDD (NDD)": wna_info.get("ndd"),
+                "Projected Actual HDD (ADD)": wna_info.get("add_projected"),
+                "Weather Station": wna_info.get("weather_station", "unknown").capitalize(),
+            },
+            "gcr_source": gcr_source,
+            "gcr_last_updated": gcr_last_updated.isoformat() if gcr_last_updated else None,
         }
 
 
@@ -287,14 +289,30 @@ class AtmosEnergyPredictedCostSensor(AtmosEnergyBaseSensor):
         """Return the estimated cost."""
         if not self.coordinator.data:
             return None
+        return self.coordinator.data.get("predicted_cost_7d")
+
+    @property
+    def extra_state_attributes(self):
+        """Return extra state attributes with pro-rated breakdown."""
+        if not self.coordinator.data:
+            return {}
             
-        usage = self.coordinator.data.get("predicted_usage_7d")
-        if usage is None:
-            return None
+        b = self.coordinator.data.get("predicted_cost_7d_breakdown", {})
+        if not b:
+            return {}
+            
+        r = b.get("rates", {})
         
-        # Prediction cost logic: usage * current rate
-        rate = self._entry.options.get("usage_rate", 0.78)
-        return round(usage * rate, 2)
+        return {
+            "model_usage_forecast": f"{self.coordinator.data.get('predicted_usage_7d', 0)} CCF",
+            "pro_rated_fixed_charge": f"${b.get('fixed_charge'):.2f} (7 days)",
+            "predicted_consumption_charge": f"${b.get('consumption_charge'):.2f} (@ ${r.get('consumption'):.5f})",
+            "predicted_gcr_charge": f"${b.get('gcr_charge'):.2f} (@ ${r.get('gcr'):.5f})",
+            "predicted_wna_charge": f"${b.get('wna_charge'):.2f} (@ ${r.get('wna', 0):.6f}/CCF)",
+            "predicted_uri_surcharge": f"${b.get('uri_charge'):.2f} (@ ${r.get('uri'):.5f})",
+            "predicted_taxes": f"${b.get('tax_amount'):.2f}",
+            "note": "Fixed costs are pro-rated to 7 days for accuracy."
+        }
 
 
 class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
