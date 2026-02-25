@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from datetime import datetime
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -16,10 +17,13 @@ from .const import (
     ATTR_DUE_DATE, 
     ATTR_BILL_DATE,
     CONF_WEATHER_ENTITY,
-    CONF_DAILY_USAGE,
+    CONF_OPERATION_MODE,
     ATTR_METER_READ_DATE,
     ATTR_AVG_TEMP,
-    ATTR_BILLING_MONTH
+    ATTR_BILLING_MONTH,
+    MODE_MONTHLY,
+    MODE_DAILY,
+    MODE_DAILY_ADVANCED
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,9 +34,18 @@ async def async_setup_entry(
     """Set up the Atmos Energy sensor platform."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     account_id = entry.data.get(CONF_USERNAME, "unknown")
-    daily_usage = entry.data.get(CONF_DAILY_USAGE, True)
-
-    if daily_usage:
+    mode = entry.data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
+    
+    if mode == MODE_MONTHLY:
+        entities = [
+            AtmosEnergyMonthlyUsageSensor(coordinator, entry, account_id),
+        ]
+    elif mode == MODE_DAILY:
+        entities = [
+            AtmosEnergyUsageSensor(coordinator, entry, account_id),
+            AtmosEnergyDaysRemainingSensor(coordinator, entry, account_id),
+        ]
+    else:  # MODE_DAILY_ADVANCED
         entities = [
             AtmosEnergyUsageSensor(coordinator, entry, account_id),
             AtmosEnergyCostSensor(coordinator, entry, account_id),
@@ -43,10 +56,6 @@ async def async_setup_entry(
         if weather_entity:
             entities.append(AtmosEnergyPredictedUsageSensor(coordinator, entry, account_id))
             entities.append(AtmosEnergyPredictedCostSensor(coordinator, entry, account_id))
-    else:
-        entities = [
-            AtmosEnergyMonthlyUsageSensor(coordinator, entry, account_id),
-        ]
 
     async_add_entities(entities)
 
@@ -74,10 +83,17 @@ class AtmosEnergyBaseSensor(CoordinatorEntity, SensorEntity):
 
 
 class AtmosEnergyUsageSensor(AtmosEnergyBaseSensor):
-    """Representation of an Atmos Energy Usage Sensor."""
+    """Representation of an Atmos Energy Usage Sensor (Display Only).
+    
+    This sensor shows the current billing period total for display purposes.
+    It does NOT have state_class to prevent Energy Dashboard from tracking it.
+    
+    Historical daily usage is imported via Statistics API in the coordinator,
+    which ensures the Energy Dashboard shows usage on the correct dates.
+    """
 
     _attr_device_class = SensorDeviceClass.GAS
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = None  # No state class - display only!
     _attr_native_unit_of_measurement = "CCF"
     _attr_name = "Gas usage (Current Billing Period)"
     _attr_suggested_object_id = f"{DOMAIN}_usage"
@@ -97,15 +113,39 @@ class AtmosEnergyUsageSensor(AtmosEnergyBaseSensor):
 
     @property
     def extra_state_attributes(self):
-        """Return extra state attributes."""
+        """Return extra state attributes including data freshness."""
         if not self.coordinator.data:
             return {"account_id": self._account_id}
-            
-        return {
+        
+        attrs = {
             "account_id": self._account_id,
             "last_reading_date": self.coordinator.data.get(ATTR_BILL_DATE),
-            "last_reset": self.coordinator.data.get("billing_period_start"),
+            "billing_period_start": self.coordinator.data.get("billing_period_start"),
         }
+        
+        # Add data freshness indicator
+        latest_date = self.coordinator.data.get("latest_date")
+        if latest_date:
+            try:
+                latest = dt_util.parse_datetime(latest_date)
+                if latest:
+                    now = dt_util.now()
+                    lag_days = (now - dt_util.as_local(latest)).days
+                    
+                    if lag_days == 0:
+                        attrs["data_freshness"] = "current"
+                    elif lag_days == 1:
+                        attrs["data_freshness"] = "1 day old"
+                    else:
+                        attrs["data_freshness"] = f"{lag_days} days old"
+                    
+                    # Add note about what the total represents
+                    attrs["note"] = f"Total through {latest.strftime('%b %d')}"
+                    
+            except Exception as e:
+                _LOGGER.debug("Could not calculate data freshness: %s", e)
+        
+        return attrs
 
 
 class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
@@ -150,53 +190,81 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
         """Return the state attributes with user-friendly breakdown."""
         if not self.coordinator.data:
             return {"account_id": self._account_id}
-            
-        usage = self.coordinator.data.get(ATTR_USAGE, 0)
-        wna_info = self.coordinator.data.get("wna_calculated", {})
         
-        # Recalculate cost data to get breakdown
+        usage = self.coordinator.data.get(ATTR_USAGE)
+        if usage is None:
+            return {"account_id": self._account_id}
+        
+        # Get WNA info and cost breakdown
+        wna_info = self.coordinator.data.get("wna_calculated", {})
+        wna_charge = wna_info.get("wna_charge", 0.0)
+        
         cost_data = self.coordinator.calculate_total_cost(
             float(usage), 
             include_fixed=True, 
-            wna_charge=wna_info.get("wna_charge", 0.0)
+            wna_charge=wna_charge
         )
-        b = cost_data["breakdown"]
-        r = b["rates"]
-
-        # GCR source info
-        gcr_source = "auto-fetched" if self.coordinator.current_gcr_rate else "manual"
-        gcr_last_updated = self.coordinator.gcr_fetcher._last_fetch if gcr_source == "auto-fetched" else None
-
+        breakdown = cost_data["breakdown"]
+        
+        # Get GCR info
+        use_auto_gcr = self._entry.options.get("auto_fetch_gcr", True)
+        if use_auto_gcr and self.coordinator.current_gcr_rate:
+            gcr_source = "auto-fetched"
+            gcr_last_updated = self.coordinator.gcr_fetcher._last_fetch
+        else:
+            gcr_source = "manual"
+            gcr_last_updated = None
+        
         return {
             "account_id": self._account_id,
-            "due_date": self.coordinator.data.get(ATTR_DUE_DATE),
-            "cost_breakdown": {
-                "Customer Charge": f"${b['fixed_charge']:.2f}",
-                "Consump Chrg": f"${b['consumption_charge']:.2f} (@ ${r['consumption']:.5f})",
-                "Rider GCR": f"${b['gcr_charge']:.2f} (@ ${r['gcr']:.5f})",
-                "Rider WNA": f"${b['wna_charge']:.2f} (@ {wna_info.get('wnaf_rate', '$0.00/CCF')})",
-                "Winter Storm Uri Surcharge": f"${b['uri_charge']:.2f} (@ ${r['uri']:.5f})",
-                "Subtotal": f"${b['subtotal']:.2f}",
-                "TAX/FEE CHARGE TOTAL": f"${b['tax_amount']:.2f} ({r['tax']:.2f}%)",
+            "formula": (
+                f"({breakdown['fixed_charge']} fixed + "
+                f"{breakdown['consumption_charge']} consumption + "
+                f"{breakdown['wna_charge']} WNA + "
+                f"{breakdown['gcr_charge']} GCR + "
+                f"{breakdown['uri_charge']} URI) + "
+                f"{breakdown['tax_amount']} tax = ${cost_data['total']}"
+            ),
+            "breakdown": {
+                "fixed_charge": f"${breakdown['fixed_charge']:.2f}",
+                "consumption_charge": f"${breakdown['consumption_charge']:.2f}",
+                "wna_charge": f"${breakdown['wna_charge']:.2f}",
+                "gcr_charge": f"${breakdown['gcr_charge']:.2f}",
+                "uri_charge": f"${breakdown['uri_charge']:.2f}",
+                "tax": f"${breakdown['tax_amount']:.2f}",
+                "subtotal": f"${breakdown['subtotal']:.2f}",
+            },
+            "rates": {
+                "consumption": f"${breakdown['rates']['consumption']:.2f}/CCF",
+                "gcr": f"${breakdown['rates']['gcr']:.4f}/CCF",
+                "wna": wna_info.get("wnaf_rate", "$0.00/CCF"),
+                "uri": f"${breakdown['rates']['uri']:.4f}/CCF",
+                "tax": f"{breakdown['rates']['tax']}%",
             },
             "wna_details": {
-                "Historical Normal HDD (NDD)": wna_info.get("ndd"),
-                "Projected Actual HDD (ADD)": wna_info.get("add_projected"),
-                "Weather Station": wna_info.get("weather_station", "unknown").capitalize(),
+                "wnaf_rate": wna_info.get("wnaf_rate", "N/A"),
+                "wna_charge": f"${wna_charge:.2f}",
+                "ndd": wna_info.get("ndd", 0),
+                "add_projected": wna_info.get("add_projected", 0),
+                "billing_month": wna_info.get("billing_month", datetime.now().month),
+                "weather_station": wna_info.get("weather_station", "unknown"),
             },
-            "gcr_source": gcr_source,
-            "gcr_last_updated": gcr_last_updated.isoformat() if gcr_last_updated else None,
+            "gcr_details": {
+                "rate": f"${breakdown['rates']['gcr']:.4f}/CCF",
+                "charge": f"${breakdown['gcr_charge']:.2f}",
+                "source": gcr_source,
+                "last_updated": gcr_last_updated.isoformat() if gcr_last_updated else None,
+            }
         }
 
 
 class AtmosEnergyDaysRemainingSensor(AtmosEnergyBaseSensor):
-    """Representation of an Atmos Energy Days Remaining Sensor."""
+    """Representation of Days Remaining in Billing Period Sensor."""
 
+    _attr_native_unit_of_measurement = "days"
     _attr_name = "Days remaining in billing period"
     _attr_suggested_object_id = f"{DOMAIN}_days_remaining"
     _attr_icon = "mdi:calendar-clock"
-    _attr_native_unit_of_measurement = "days"
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
@@ -205,46 +273,46 @@ class AtmosEnergyDaysRemainingSensor(AtmosEnergyBaseSensor):
 
     @property
     def native_value(self):
-        """Return the number of days remaining."""
+        """Return the days remaining."""
         if not self.coordinator.data:
             return None
-            
+        
+        next_read_dt = self.coordinator.data.get("next_meter_read_dt")
+        if not next_read_dt:
+            return None
+        
+        # Ensure both datetimes are timezone-aware for comparison
+        now = dt_util.now()
+        if next_read_dt.tzinfo is None:
+            next_read_dt = dt_util.as_local(next_read_dt)
+        
+        delta = next_read_dt - now
+        return max(0, delta.days)
+
+    @property
+    def extra_state_attributes(self):
+        """Return extra state attributes."""
+        if not self.coordinator.data:
+            return {"account_id": self._account_id}
+        
         next_read_dt = self.coordinator.data.get("next_meter_read_dt")
         
-        if next_read_dt:
-            try:
-                localized_next = dt_util.as_local(next_read_dt)
-                now = dt_util.now()
-                remaining = (localized_next - now).days
-                return max(0, remaining)
-            except Exception as e:
-                _LOGGER.debug("Error localized date in sensor: %s", e)
-        
-        # Fallback to start_date + 30 days
-        start_date_str = self.coordinator.data.get(ATTR_BILLING_PERIOD_START)
-        if start_date_str:
-            try:
-                start_date = dt_util.parse_datetime(start_date_str)
-                if start_date:
-                    localized_start = dt_util.as_local(start_date)
-                    target_date = localized_start + timedelta(days=30)
-                    remaining = (target_date - dt_util.now()).days
-                    return max(0, remaining)
-            except Exception:
-                pass
-                
-        return None
+        return {
+            "account_id": self._account_id,
+            "next_meter_read_date": next_read_dt.strftime("%Y-%m-%d") if next_read_dt else None,
+            "billing_period_start": self.coordinator.data.get("billing_period_start"),
+        }
 
 
 class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
-    """Sensor that predicts gas usage for the next 7 days based on weather forecast."""
+    """7-day predicted gas usage based on weather forecast."""
 
     _attr_device_class = SensorDeviceClass.GAS
-    _attr_state_class = SensorStateClass.TOTAL
+    _attr_state_class = None  # Predictions are point-in-time, not cumulative
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "Predicted Gas Usage (Next 7 Days)"
+    _attr_name = "Predicted usage (7 days)"
     _attr_suggested_object_id = f"{DOMAIN}_predicted_usage_7d"
-    _attr_icon = "mdi:chart-bell-curve"
+    _attr_icon = "mdi:chart-line"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
@@ -253,7 +321,7 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
 
     @property
     def native_value(self):
-        """Return the state of the sensor from pre-calculated coordinator data."""
+        """Return predicted usage."""
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("predicted_usage_7d")
@@ -261,23 +329,28 @@ class AtmosEnergyPredictedUsageSensor(AtmosEnergyBaseSensor):
     @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
+        if not self.coordinator.data:
+            return {"account_id": self._account_id}
+        
         return {
-            "base_load": self.coordinator.base_load,
-            "heating_coefficient": self.coordinator.heating_coeff,
-            "balance_temperature": self.coordinator.balance_temp,
-            "r_squared": self.coordinator.r_squared,
+            "account_id": self._account_id,
+            "model_base_load": self.coordinator.base_load,
+            "model_heating_coefficient": self.coordinator.heating_coeff,
+            "model_balance_temperature": self.coordinator.balance_temp,
+            "model_r_squared": self.coordinator.r_squared,
+            "forecast_days": 7,
         }
 
 
 class AtmosEnergyPredictedCostSensor(AtmosEnergyBaseSensor):
-    """Sensor that predicts gas cost for the next 7 days."""
+    """7-day predicted cost based on weather forecast."""
 
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
+    _attr_state_class = None  # Predictions are point-in-time, not cumulative
     _attr_native_unit_of_measurement = "USD"
-    _attr_name = "Predicted Gas Cost (Next 7 Days)"
+    _attr_name = "Predicted cost (7 days)"
     _attr_suggested_object_id = f"{DOMAIN}_predicted_cost_7d"
-    _attr_icon = "mdi:currency-usd"
+    _attr_icon = "mdi:cash-clock"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
@@ -286,49 +359,47 @@ class AtmosEnergyPredictedCostSensor(AtmosEnergyBaseSensor):
 
     @property
     def native_value(self):
-        """Return the estimated cost."""
+        """Return predicted cost."""
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("predicted_cost_7d")
 
     @property
     def extra_state_attributes(self):
-        """Return extra state attributes with pro-rated breakdown."""
+        """Return extra state attributes."""
         if not self.coordinator.data:
-            return {}
-            
-        b = self.coordinator.data.get("predicted_cost_7d_breakdown", {})
-        if not b:
-            return {}
-            
-        r = b.get("rates", {})
+            return {"account_id": self._account_id}
+        
+        breakdown = self.coordinator.data.get("predicted_cost_7d_breakdown", {})
         
         return {
-            "model_usage_forecast": f"{self.coordinator.data.get('predicted_usage_7d', 0)} CCF",
-            "pro_rated_fixed_charge": f"${b.get('fixed_charge'):.2f} (7 days)",
-            "predicted_consumption_charge": f"${b.get('consumption_charge'):.2f} (@ ${r.get('consumption'):.5f})",
-            "predicted_gcr_charge": f"${b.get('gcr_charge'):.2f} (@ ${r.get('gcr'):.5f})",
-            "predicted_wna_charge": f"${b.get('wna_charge'):.2f} (@ ${r.get('wna', 0):.6f}/CCF)",
-            "predicted_uri_surcharge": f"${b.get('uri_charge'):.2f} (@ ${r.get('uri'):.5f})",
-            "predicted_taxes": f"${b.get('tax_amount'):.2f}",
-            "note": "Fixed costs are pro-rated to 7 days for accuracy."
+            "account_id": self._account_id,
+            "forecast_days": 7,
+            "breakdown": {
+                "fixed_charge": f"${breakdown.get('fixed_charge', 0):.2f}",
+                "consumption_charge": f"${breakdown.get('consumption_charge', 0):.2f}",
+                "wna_charge": f"${breakdown.get('wna_charge', 0):.2f}",
+                "gcr_charge": f"${breakdown.get('gcr_charge', 0):.2f}",
+                "uri_charge": f"${breakdown.get('uri_charge', 0):.2f}",
+                "tax": f"${breakdown.get('tax_amount', 0):.2f}",
+            } if breakdown else None,
         }
 
 
 class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
-    """Representation of an Atmos Energy Monthly Usage Sensor."""
+    """Representation of an Atmos Energy Monthly Usage Sensor (no daily data)."""
 
-    _attr_device_class = None
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.GAS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "CCF"
-    _attr_name = "Gas Usage (Previous Billing Period)"
-    _attr_suggested_object_id = f"{DOMAIN}_monthly_usage"
-    _attr_icon = "mdi:gas-burner"
+    _attr_name = "Gas usage"
+    _attr_suggested_object_id = f"{DOMAIN}_usage"
+    _attr_icon = "mdi:fire"
 
     def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
         """Initialize the sensor."""
         super().__init__(coordinator, entry, account_id)
-        self._attr_unique_id = f"{DOMAIN}_{account_id}_monthly_usage"
+        self._attr_unique_id = f"{DOMAIN}_{account_id}_usage"
 
     @property
     def native_value(self):
@@ -342,11 +413,13 @@ class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
         """Return extra state attributes."""
         if not self.coordinator.data:
             return {"account_id": self._account_id}
-            
+        
         return {
             "account_id": self._account_id,
-            ATTR_BILL_DATE: self.coordinator.data.get(ATTR_BILL_DATE),
-            ATTR_METER_READ_DATE: self.coordinator.data.get(ATTR_METER_READ_DATE),
-            ATTR_AVG_TEMP: self.coordinator.data.get(ATTR_AVG_TEMP),
-            ATTR_BILLING_MONTH: self.coordinator.data.get(ATTR_BILLING_MONTH),
+            "amount_due": self.coordinator.data.get("amount_due"),
+            "due_date": self.coordinator.data.get(ATTR_DUE_DATE),
+            "last_bill_date": self.coordinator.data.get(ATTR_BILL_DATE),
+            "meter_read_date": self.coordinator.data.get(ATTR_METER_READ_DATE),
+            "avg_temp": self.coordinator.data.get(ATTR_AVG_TEMP),
+            "billing_month": self.coordinator.data.get(ATTR_BILLING_MONTH),
         }

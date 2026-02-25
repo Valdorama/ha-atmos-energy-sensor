@@ -16,27 +16,54 @@ A custom component for Home Assistant to retrieve usage data from [Atmos Energy]
 - **Energy Dashboard Ready**: Fully compatible with the Home Assistant Energy Dashboard for long-term tracking.
 - **Automated Modeling**: Automatically learns your home's heating efficiency by analyzing historical usage and temperature data.
 
-## 📊 Available Sensors
+## 📊 Available Sensors & Modes
 
-This integration provides different sensors depending on your account type (Daily vs Monthly).
+This integration supports three modes of operation to balance data granularity for different regions and use cases.
 
-### Daily Usage Mode (Standard)
-*Enabled by checking "Enable advanced cost prediction" during setup.*
+### 1. Monthly Data (Basic)
+*   **Data Source**: Monthly bill downloads.
+*   **Usage**: Displays the total from your last successful bill.
+*   **Sensors**: `Gas usage` (Previous bill).
+*   **Energy Dashboard**: Direct tracking of the sensor (`total_increasing`).
 
-| Sensor | Description | Class |
-| :--- | :--- | :--- |
-| **Gas usage (Current)** | Total usage (CCF) for the current billing period. | `total_increasing` |
-| **Estimated cost** | Calculated cost for the current period (including WNA, GCR, tax, and fixed fees). | `total` |
-| **Days remaining** | Precise days left in your billing cycle (parsed from the Atmos portal). | `measurement` |
-| **Predicted Usage (7d)** | Estimated gas usage for the next 7 days based on weather forecast. | `total` |
-| **Predicted Cost (7d)** | Estimated gas cost for the next 7 days based on weather forecast. | `total` |
+### 2. Daily Data (Basic)
+*   **Data Source**: Daily usage downloads.
+*   **Usage**: Historical daily data and "Days Remaining" in cycle.
+*   **Sensors**: `Gas usage (Current)`, `Days remaining`.
+*   **Energy Dashboard**: Uses the **Statistics API** for accurate historical tracking.
 
-### Monthly Usage Mode
-*Used if your account does not provide granular daily data.*
+### 3. Daily Data + Advanced Prediction (Mid-Tex Only)
+*   **Data Source**: Daily usage + regional weather + GCR rates.
+*   **Usage**: Total high-accuracy bill forecasting.
+*   **Sensors**: All of the above, plus `Estimated cost`, `Predicted usage (7d)`, and `Predicted cost (7d)`.
+*   **Energy Dashboard**: Uses the **Statistics API**.
 
-| Sensor | Description | Class |
-| :--- | :--- | :--- |
-| **Gas Usage (Previous)** | Total usage (CCF) from the last completed billing cycle. | `measurement` |
+---
+
+### Sensor Comparison
+
+| Sensor | Monthly | Daily | Daily Advanced | `state_class` |
+| :--- | :---: | :---: | :---: | :--- |
+| **Gas usage (Current)** | | ✅ | ✅ | `None` (Statistics API) |
+| **Days remaining** | | ✅ | ✅ | `None` |
+| **Estimated cost** | | | ✅ | `total` |
+| **Predicted Usage (7d)** | | | ✅ | `None` |
+| **Predicted Cost (7d)** | | | ✅ | `None` |
+| **Gas Usage (Monthly)** | ✅ | | | `total_increasing` |
+
+---
+
+## ⚡ Energy Dashboard Integration (Daily Mode)
+
+Atmos Energy data is typically delayed by 24 hours. To ensure your gas usage appears on the **correct day** in Home Assistant, this integration uses the **Statistics API** instead of tracking the sensor state.
+
+### How to add to your Dashboard:
+1.  Go to **Settings > Dashboards > Energy**.
+2.  Under **Gas Consumption**, click **Add Gas Source**.
+3.  Search for **Atmos Energy Daily Usage**. 
+    > [!TIP]
+    > Do **not** select `sensor.atmos_energy_gas_usage` (it will not appear in the list). Look for the entry labeled `Atmos Energy Daily Usage` or `atmos_energy:usage_...`.
+4.  Data will populate historically after the first successful fetch (usually at 7 AM).
 
 ---
 
@@ -89,3 +116,7 @@ If advanced prediction is enabled, you will be guided through:
 - **Frequency**: Data is fetched daily at 7 AM (aligned with Atmos's data refresh) to minimize portal load.
 - **Login Issues**: Ensure you can log in to [Atmos Energy](https://www.atmosenergy.com/) directly and have accepted any new Terms of Service.
 - **GCR Fetching**: If the integration cannot fetch the latest rate PDF, it will fall back to your manually entered GCR rate and log a warning.
+- **New Operation Modes (v0.7.2)**:
+    - **Monthly**: Lightweight monthly billing data ONLY.
+    - **Daily (Basic)**: Daily data and stats API, but skips heavy modeling and cost prediction.
+    - **Daily (Advanced)**: Full predictive modeling and WNA/GCR calculations for Mid-Tex customers.

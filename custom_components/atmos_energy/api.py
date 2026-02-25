@@ -141,6 +141,7 @@ class AtmosEnergyApiClient:
         stripped_content = content.lstrip()
         if stripped_content.startswith((b"<!DOCTYP", b"<html", b"<HTML")):
             try:
+                # OPTIMIZATION: Only scan the first 10,000 characters for performance
                 html_text = stripped_content[:10000].decode('utf-8', errors='replace').lower()
             except Exception:
                 return
@@ -315,28 +316,84 @@ class AtmosEnergyApiClient:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _parse_impl)
         
+    def _parse_xls_to_dataframe(self, content: bytes):
+        """Helper to convert binary XLS content to a pandas DataFrame."""
+        import pandas as pd
+        from io import BytesIO
+        
+        stripped = content.strip()
+        try:
+            try:
+                df = pd.read_excel(BytesIO(stripped))
+            except Exception:
+                df = pd.read_excel(BytesIO(stripped), engine='xlrd')
+        except Exception as e:
+            _LOGGER.error("Failed to parse XLS data: %s", e)
+            raise DataParseError(f"Format error: {e}") from e
+            
+        # Normalize column names
+        df.columns = [str(c).lower().strip() for c in df.columns]
+        return df, pd
+
+    async def get_monthly_usage(self) -> dict[str, Any]:
+        """Fetch and parse monthly usage data."""
+        await self.login()
+        
+        url = f"{self._base_url}/accountcenter/usagehistory/monthlyUsageDownload.html"
+        _LOGGER.debug("Fetching monthly usage data from %s", url)
+        
+        status, effective_url, content = await self._request_with_retry(
+            'get', 
+            url, 
+            headers={**self._common_headers, 'Referer': f"{self._base_url}/accountcenter/usagehistory/usagehistory.html"}
+        )
+        await self._verify_response_headers(status, effective_url)
+        await self._verify_content(content)
+            
+        return await self._parse_monthly_xls_data(content)
+
+    async def _parse_monthly_xls_data(self, content: bytes) -> dict[str, Any]:
+        """Parse monthly XLS data."""
+        await self._verify_content(content)
+
+        def _parse_impl():
+            df, pd = self._parse_xls_to_dataframe(content)
+            
+            if 'consumption' not in df.columns:
+                raise DataParseError(f"Missing 'consumption' column in monthly data. Found: {list(df.columns)}")
+            
+            # Find charge date column
+            charge_date_col = next((col for col in df.columns if 'charge date' in col), None)
+            if not charge_date_col:
+                raise DataParseError(f"Missing 'charge date' column in monthly data. Found: {list(df.columns)}")
+
+            # Convert charge date to datetime and sort
+            df[charge_date_col] = pd.to_datetime(df[charge_date_col], errors='coerce')
+            df = df.dropna(subset=[charge_date_col])
+            df = df.sort_values(by=charge_date_col, ascending=True)
+
+            if df.empty:
+                return {}
+
+            latest_row = df.iloc[-1]
+            
+            return {
+                "usage": float(latest_row['consumption']),
+                "charge_date": str(latest_row[charge_date_col]),
+                "meter_read_date": str(latest_row.get('meter read date', '')),
+                "avg_temp": float(latest_row.get('avg temp', 0.0)) if pd.notnull(latest_row.get('avg temp')) else None,
+                "billing_month": str(latest_row.get('billing month', '')),
+            }
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _parse_impl)
+        
     async def _parse_xls_data(self, content: bytes) -> dict[str, Any]:
         """Parse the binary XLS content using pandas."""
         await self._verify_content(content)
 
         def _parse_impl():
-            import pandas as pd
-            from io import BytesIO
-            
-            stripped = content.strip()
-            
-            try:
-                # Standard Excel parsing (with fallback to xlrd for old formats)
-                try:
-                    df = pd.read_excel(BytesIO(stripped))
-                except Exception:
-                    df = pd.read_excel(BytesIO(stripped), engine='xlrd')
-            except Exception as e:
-                _LOGGER.error("Failed to parse data (first 50 bytes: %s): %s", stripped[:50].hex(' '), e)
-                raise DataParseError(f"Format error: {e}") from e
-                
-            # Normalize column names to lowercase/stripped
-            df.columns = [str(c).lower().strip() for c in df.columns]
+            df, pd = self._parse_xls_to_dataframe(content)
             
             if 'consumption' not in df.columns:
                 raise DataParseError(f"Missing 'consumption' column. Found: {list(df.columns)}")

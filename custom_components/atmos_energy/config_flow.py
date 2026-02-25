@@ -14,11 +14,14 @@ from .const import (
     CONF_USAGE_RATE, 
     CONF_TAX_PERCENT, 
     CONF_WEATHER_ENTITY,
-    CONF_DAILY_USAGE,
+    CONF_OPERATION_MODE,
     CONF_WEATHER_STATION,
     CONF_GCR_RATE,
     CONF_URI_SURCHARGE,
-    CONF_AUTO_FETCH_GCR
+    CONF_AUTO_FETCH_GCR,
+    MODE_MONTHLY,
+    MODE_DAILY,
+    MODE_DAILY_ADVANCED
 )
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError
@@ -52,7 +55,10 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 await client.login()
                 self._user_data = user_input
-                if user_input.get(CONF_DAILY_USAGE, True):
+                
+                # Branch based on mode
+                mode = user_input.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
+                if mode == MODE_DAILY_ADVANCED:
                     return await self.async_step_weather_station()
                 
                 return self.async_create_entry(
@@ -74,7 +80,13 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
-                    vol.Required(CONF_DAILY_USAGE, default=True): bool,
+                    vol.Required(CONF_OPERATION_MODE, default=MODE_DAILY_ADVANCED): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[MODE_MONTHLY, MODE_DAILY, MODE_DAILY_ADVANCED],
+                            translation_key="operation_mode",
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                 }
             ),
             errors=errors,
@@ -186,7 +198,7 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
             self._data.update({
                 CONF_USERNAME: user_input[CONF_USERNAME],
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
-                CONF_DAILY_USAGE: user_input[CONF_DAILY_USAGE],
+                CONF_OPERATION_MODE: user_input[CONF_OPERATION_MODE],
             })
             
             # Validate credentials
@@ -197,7 +209,7 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
                 # Sync data back to the config entry if credentials changed
                 self.hass.config_entries.async_update_entry(self._config_entry, data=self._data)
                 
-                if self._data[CONF_DAILY_USAGE]:
+                if self._data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
                     return await self.async_step_weather_station()
                 
                 return self.async_create_entry(title="", data={})
@@ -213,7 +225,16 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema({
                 vol.Required(CONF_USERNAME, default=self._data.get(CONF_USERNAME)): str,
                 vol.Required(CONF_PASSWORD, default=self._data.get(CONF_PASSWORD)): str,
-                vol.Required(CONF_DAILY_USAGE, default=self._data.get(CONF_DAILY_USAGE, True)): bool,
+                vol.Required(
+                    CONF_OPERATION_MODE, 
+                    default=self._data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[MODE_MONTHLY, MODE_DAILY, MODE_DAILY_ADVANCED],
+                        translation_key="operation_mode",
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }),
             errors=errors,
         )

@@ -7,7 +7,7 @@
                 "data": {
                     "username": "Username",
                     "password": "Password",
-                    "daily_usage": "Enable advanced cost prediction (Mid-Tex Only)"
+                    "operation_mode": "Operation Mode"
                 }
             },
             "weather_station": {
@@ -62,7 +62,7 @@
                 "data": {
                     "username": "Username",
                     "password": "Password",
-                    "daily_usage": "Enable advanced cost prediction (Mid-Tex Only)"
+                    "operation_mode": "Operation Mode"
                 }
             },
             "weather_station": {
@@ -90,6 +90,15 @@
                 "data": {
                     "weather_entity": "Weather Entity"
                 }
+            }
+        }
+    },
+    "selector": {
+        "operation_mode": {
+            "options": {
+                "monthly": "Monthly Data (Basic)",
+                "daily": "Daily Data (Basic)",
+                "daily_advanced": "Daily Data + Advanced Prediction (Mid-Tex Only)"
             }
         }
     }
