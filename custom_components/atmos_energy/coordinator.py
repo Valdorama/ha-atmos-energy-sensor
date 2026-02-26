@@ -2,6 +2,7 @@
 import logging
 import math
 import asyncio
+import os
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -11,13 +12,16 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
-from homeassistant.util import dt as dt_util
+from homeassistant.util import dt as dt_util, slugify
+from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
-    async_add_external_statistics,
+    async_import_statistics,
+    statistics_during_period,
+    get_last_statistics,
     StatisticMetaData,
     StatisticData,
 )
-from homeassistant.const import UnitOfVolume
+from homeassistant.const import UnitOfVolume, CONF_USERNAME
 
 from .const import (
     DOMAIN, 
@@ -68,13 +72,12 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         self._history = {} # Keyed by date string YYYY-MM-DD
         self._unsaved_keys = set()  # Track keys that need to be saved
         
-        # Model coefficients
         self.base_load = DEFAULT_BASE_LOAD
         self.heating_coeff = DEFAULT_HEATING_COEFF
         self.balance_temp = DEFAULT_BALANCE_TEMP
         self.r_squared = 0.0
-        self._last_optimization_count = 0  # Track when we last did full optimization
-        
+        self._last_optimization_count = 0
+        self.last_update: datetime | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -91,131 +94,281 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             stored = await self._store.async_load()
             if stored:
                 self._history = stored.get("history", {})
-                _LOGGER.debug("Loaded %d days of history from storage", len(self._history))
+                last_update_str = stored.get("last_update")
+                if last_update_str:
+                    try:
+                        self.last_update = dt_util.parse_datetime(last_update_str)
+                    except Exception:
+                        pass
+                
+                # Restore full data state if update is recent
+                self.data = stored.get("data", {})
+                
+                _LOGGER.debug("Loaded %d days of history and last update (%s) from storage", len(self._history), self.last_update)
                 self._recalculate_model()
         except Exception as e:
             _LOGGER.warning("Failed to load Atmos history: %s", e)
 
     async def _async_save_history(self):
-        """Save only new history to storage (incremental mode)."""
-        # Only save if we have new data
-        if not self._unsaved_keys:
-            return
+        """Save history and metadata to storage."""
         
         try:
             stored = await self._store.async_load() or {}
             history = stored.get("history", {})
             
-            # Only update new keys
             for key in self._unsaved_keys:
                 if key in self._history:
                     history[key] = self._history[key]
             
-            await self._store.async_save({"history": history})
+            payload = {"history": history}
+            if self.last_update:
+                payload["last_update"] = self.last_update.isoformat()
+            
+            # Persist the full data dictionary (usage, WNA, predictions, etc.)
+            if self.data:
+                payload["data"] = self.data
+                
+            await self._store.async_save(payload)
             self._unsaved_keys.clear()
-            _LOGGER.debug("Saved history to storage")
+            _LOGGER.debug("Saved history and metadata to storage")
         except Exception as e:
             _LOGGER.error("Failed to save Atmos history: %s", e)
 
     async def _async_import_daily_statistics(self, data: dict):
-        """Import daily usage statistics with correct timestamps.
-        
-        This imports historical data into HA's Statistics database with
-        the actual date of each reading, not the date we imported it.
-        This ensures the Energy Dashboard shows usage on the correct dates.
-        """
+        """Import daily usage statistics with correct timestamps."""
         history = data.get("history", [])
         if not history:
-            _LOGGER.debug("No history to import for statistics")
             return
         
-        # Sort history by date to ensure correct cumulative sum
-        # Atmos dates are YYYY-MM-DD or MM/DD/YYYY. YYYY-MM-DD is sortable.
+        await self._async_import_statistics_list(history)
+
+    async def _async_import_statistics_list(self, history: list[dict]):
+        """Import a list of usage records into the Statistics API."""
+        if not history:
+            return
+
+        # 1. Parse dates and sort chronologically (not alphabetically!)
+        parsed_history = []
+        for entry in history:
+            date_str = entry.get("date", "")
+            dt = self._parse_date(date_str)
+            if dt:
+                # Store parsed date for sorting but keep it naive/normalized to date
+                parsed_history.append({**entry, "_dt": dt})
+        
+        if not parsed_history:
+            _LOGGER.warning("No valid dates found in import batch")
+            return
+
+        # Sort by the actual datetime objects
+        parsed_history.sort(key=lambda x: x["_dt"])
+        sorted_history = parsed_history
+
+        username = self.config_entry.data.get(CONF_USERNAME, "unknown").lower()
+        # Entity ID format: sensor.atmos_energy_<username>_usage
+        # Use HA's official slugify to match entity ID generation perfectly
+        safe_username = slugify(username)
+        statistic_id = f"sensor.{DOMAIN}_{safe_username}_usage"
+
+        # Try to find the current cumulative sum from the database
+        # to ensure we don't cause negative spikes in the Energy Dashboard.
+        cumulative_sum = 0.0
         try:
-            sorted_history = sorted(history, key=lambda x: x.get("date", ""))
-        except Exception:
-            sorted_history = history
+            # We need the sum from the point JUST BEFORE our new data starts.
+            # first_dt is the earliest record in this batch
+            first_dt = sorted_history[0]["_dt"]
+            
+            # Force to midnight LOCAL, then convert to UTC (matching the loop below)
+            # This ensures the search cutoff matches the record timestamps.
+            start_of_import = dt_util.as_utc(datetime(first_dt.year, first_dt.month, first_dt.day))
+            
+            _LOGGER.debug(
+                "Checking for predecessor sum before %s (statistic_id: %s)", 
+                start_of_import, statistic_id
+            )
 
-        # Create unique statistic_id for this account - MUST be domain:identifier
-        # We use usage_ prefix and lowercase everything for safety
-        entry_id = self.config_entry.entry_id.lower()
-        statistic_id = f"{DOMAIN}:usage_{entry_id}"
+            # 2. Query for the last statistic BEFORE this start_of_import.
+            # We look back up to 1 year to find a predecessor. 
+            # statistics_during_period returns a dict of lists of StatisticData.
+            stats = await get_instance(self.hass).async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                start_of_import - timedelta(days=365),
+                start_of_import,
+                {statistic_id},
+                "day",
+                None,
+                {"sum"}
+            )
+            
+            if stats and statistic_id in stats and stats[statistic_id]:
+                # We want the last record that is STRICTLY before the start of our current day
+                # Filter to ensure we don't accidentally pick up a record from the current batch 
+                # that might exist from a previous failed or partial import.
+                valid_stats = []
+                for s in stats[statistic_id]:
+                    start_val = s.get("start")
+                    if isinstance(start_val, (int, float)):
+                        start_dt = dt_util.utc_from_timestamp(start_val)
+                    else:
+                        start_dt = start_val
+                        
+                    if start_dt and start_dt < start_of_import:
+                        valid_stats.append(s)
+                
+                if valid_stats:
+                    last_record = valid_stats[-1]
+                    cumulative_sum = last_record.get("sum", 0.0)
+                    _LOGGER.debug(
+                        "Found predecessor sum for %s: %.2f (from %s). Batch starts at %s", 
+                        statistic_id, cumulative_sum, last_record.get("start"), start_of_import
+                    )
+                else:
+                    _LOGGER.debug("No records found strictly before %s in search window", start_of_import)
+            else:
+                valid_stats = []
 
-        # Metadata for the statistics
+            if not valid_stats:
+                # 3. Fallback: If no predecessor found in window, check absolute latest
+                last_stats = await get_instance(self.hass).async_add_executor_job(
+                    get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
+                )
+                if last_stats and statistic_id in last_stats:
+                    latest_record = last_stats[statistic_id][0]
+                    
+                    # Normalize start for comparison
+                    l_start = latest_record.get("start")
+                    if isinstance(l_start, (int, float)):
+                        l_start_dt = dt_util.utc_from_timestamp(l_start)
+                    else:
+                        l_start_dt = l_start
+
+                    # Only use it if it's strictly before our batch starts
+                    if l_start_dt and l_start_dt < start_of_import:
+                        cumulative_sum = latest_record.get("sum", 0.0)
+                        _LOGGER.debug(
+                            "Found predecessor from absolute latest: %.2f (from %s)",
+                            cumulative_sum, latest_record.get("start")
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Absolute latest record (%s) is at or after batch start (%s). Ignoring.",
+                            latest_record.get("start"), start_of_import
+                        )
+                        cumulative_sum = 0.0
+                else:
+                    _LOGGER.info("No prior statistics found for %s. Starting new timeline at 0.0.", statistic_id)
+                    
+        except Exception as e:
+            _LOGGER.error("Logic error determining continuity sum for %s: %s", statistic_id, e)
+            # We still continue with cumulative_sum = 0.0 to avoid crashing the whole update
+
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
-            name="Atmos Energy Daily Usage",
-            source=DOMAIN,
+            name=f"Atmos Energy Usage ({username})",
+            source="recorder",  # Internal sensor statistics use 'recorder' source
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfVolume.CENTUM_CUBIC_FEET,
             unit_class="volume",
         )
 
-        # Convert history to statistics with cumulative sum
         statistics = []
-        cumulative_sum = 0.0
         
         for record in sorted_history:
-            date_str = record.get("date")
+            dt = record["_dt"]
             usage = record.get("usage")
             
-            if not date_str or usage is None:
+            if usage is None:
                 continue
             
             try:
-                # Use HA's native parser first (ISO 8601)
-                date = dt_util.parse_datetime(date_str)
+                # dt is already a naive datetime at midnight (from _parse_date)
+                timestamp_utc = dt_util.as_utc(dt)
                 
-                # Fallback to MM/DD/YYYY if the string matches that format
-                if date is None:
-                    try:
-                        # atmos dates are sometimes 02/11/2026
-                        date = datetime.strptime(date_str, "%m/%d/%Y")
-                    except ValueError:
-                        _LOGGER.debug("Could not parse date string for statistics: %s", date_str)
-                        continue
-                
-                # Standard HA daily statistic timestamp: beginning of the day (00:00)
-                timestamp = date.replace(hour=0, minute=0, second=0, microsecond=0)
-                
-                # Convert to UTC for storage
-                timestamp_utc = dt_util.as_utc(timestamp)
-                
-                # Update running total
                 usage_val = float(usage)
                 cumulative_sum += usage_val
                 
                 statistics.append(StatisticData(
                     start=timestamp_utc,
-                    state=usage_val,      # Point-in-time state (daily usage)
-                    sum=cumulative_sum,   # Cumulative total required for Energy Dashboard
+                    state=usage_val,
+                    sum=cumulative_sum,
                 ))
-                
-            except Exception as e:
-                _LOGGER.debug("Could not parse date %s for statistics: %s", date_str, e)
+            except Exception:
                 continue
         
         if not statistics:
-            _LOGGER.debug("No valid statistics to import")
             return
-        
-        # Import into HA statistics database - NOTE: This is a callback, NOT awaitable
+
         try:
-            async_add_external_statistics(
-                self.hass,
-                metadata,
-                statistics,
-            )
-            
+            async_import_statistics(self.hass, metadata, statistics)
             _LOGGER.info(
-                "Imported %d daily usage statistics (latest: %s, cumulative: %.2f CCF)",
+                "Successfully imported %d daily usage statistics to %s",
                 len(statistics),
-                statistics[-1]["start"].strftime("%Y-%m-%d") if statistics else "N/A",
-                cumulative_sum
+                statistic_id
             )
         except Exception as e:
             _LOGGER.error("Failed to add external statistics: %s", e)
+
+    async def async_import_historical_xls(self, file_path: str):
+        """Import historical daily usage from a local XLS file."""
+        _LOGGER.info("Starting historical data import from: %s", file_path)
+        
+        # Security: Ensure file is within config directory
+        config_dir = self.hass.config.config_dir
+        abs_path = os.path.abspath(file_path)
+        
+        if not abs_path.startswith(os.path.abspath(config_dir)):
+             # If it's a relative path, try joining with config_dir
+             abs_path = os.path.abspath(os.path.join(config_dir, file_path))
+             if not abs_path.startswith(os.path.abspath(config_dir)):
+                 raise ValueError(f"Access denied: file {file_path} is outside of config directory")
+
+        if not os.path.exists(abs_path):
+            raise FileNotFoundError(f"Historical XLS file not found at: {abs_path}")
+
+        try:
+            # Move blocking file read to a thread executor
+            def read_file(path):
+                with open(path, 'rb') as f:
+                    return f.read()
+            
+            content = await self.hass.async_add_executor_job(read_file, abs_path)
+
+            # Use the API client's parsing logic (it doesn't require a live session)
+            # Use public helper method if available, or call protected one
+            data = await self.client._parse_xls_data(content)
+            history = data.get("history", [])
+            
+            if history:
+                _LOGGER.info("Found %d records in %s, importing...", len(history), file_path)
+                await self._async_import_statistics_list(history)
+            else:
+                _LOGGER.warning("No usage records found in %s. Ensure this is a DAILY usage spreadsheet.", file_path)
+                
+        except Exception as e:
+            _LOGGER.error("Failed to import historical data from %s: %s", file_path, e)
+            raise
+
+    def _parse_date(self, date_str: str) -> datetime | None:
+        """Parse Atmos date string into datetime object."""
+        if not date_str:
+            return None
+            
+        # Try common Atmos formats
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                # Normalize to midnight for daily usage
+                return datetime(dt.year, dt.month, dt.day)
+            except ValueError:
+                continue
+                
+        # Fallback to dt_util
+        dt = dt_util.parse_datetime(date_str)
+        if dt:
+            return datetime(dt.year, dt.month, dt.day)
+        return None
 
     def _recalculate_model(self):
         """Calculate Base Load, Heating Coefficient, and Balance Temp using Linear Regression."""
@@ -599,8 +752,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             "breakdown": {
                 "fixed_charge": round(fixed, 2),
                 "consumption_charge": round(consumption_charge, 2),
-                "gcr_charge": round(gcr_charge, 2),
                 "wna_charge": round(wna_charge, 2),
+                "gcr_charge": round(gcr_charge, 2),
                 "uri_charge": round(uri_charge, 2),
                 "tax_amount": round(tax_amount, 2),
                 "subtotal": round(subtotal, 2),
@@ -610,8 +763,38 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                     "uri": uri_rate,
                     "tax": tax_pct,
                 }
-            }
+            },
+            "variable_rate_per_ccf": round((consumption_charge + wna_charge + gcr_charge + uri_charge + tax_amount) / usage, 4) if usage > 0 else 0.0
         }
+
+    def get_current_variable_rate(self) -> float:
+        """Calculate the current variable cost per CCF (including tax).
+        
+        This is used by the Energy Dashboard to track costs as prices change.
+        """
+        options = self.config_entry.options
+        
+        consumption_rate = float(options.get("usage_rate", 0.78))
+        gcr_rate = float(self.current_gcr_rate or options.get("gcr_rate", 1.17))
+        uri_rate = float(options.get("uri_surcharge", 0.018431))
+        
+        # WNA is variable but is calculated based on historical billing period.
+        # For the "Price per CCF" sensor, we use the average WNA factor from the current data.
+        wna_factor = 0.0
+        if self.data:
+            wna_info = self.data.get("wna_calculated", {})
+            wna_factor = wna_info.get("wna_factor", 0.0)
+        elif self._history:
+            # If we have history but no current data yet (on startup), we can't easily
+            # estimate WNA, so we'll stay at 0.0 until the first refresh.
+            wna_factor = 0.0
+            
+        # Total rate before tax
+        variable_rate = consumption_rate + gcr_rate + uri_rate + (wna_factor * consumption_rate)
+        
+        # Apply tax
+        tax_pct = float(options.get("tax_percent", 8.0))
+        return round(variable_rate * (1 + (tax_pct / 100.0)), 4)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -648,6 +831,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 elif usage > 10000:
                     _LOGGER.warning("Unusually high gas usage detected: %s CCF", usage)
             
+            self.last_update = dt_util.now()
+            await self._async_save_history()
             return data
             
         except AuthenticationError as err:
@@ -765,6 +950,39 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         if updated:
             self._recalculate_model()
             await self._async_save_history()
+
+    async def async_setup_refresh(self):
+        """Setup refresh logic for startup."""
+        _LOGGER.debug("Starting Atmos Energy startup refresh check")
+        
+        # Ensure model is trained if history exists
+        if self._history and not hasattr(self, "base_load"):
+             self._recalculate_model()
+
+        now = dt_util.now()
+        
+        # Calculate when the most recent scheduled update SHOULD have happened
+        # (the 7 AM today, or 7 AM yesterday if it's not 7 AM yet)
+        scheduled_today = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        reference_time = scheduled_today
+        if now < scheduled_today:
+             reference_time = scheduled_today - timedelta(days=1)
+             
+        # If we have a last_update AND data, and it's AFTER the reference_time, 
+        # then we've already updated for this cycle.
+        if self.last_update and self.data and self.last_update >= reference_time:
+             _LOGGER.info(
+                 "Skipping startup fetch; last update (%s) is recent. Next update at 07:00.",
+                 self.last_update.strftime("%Y-%m-%d %H:%M:%S")
+             )
+             self._schedule_next_update()
+             # Notify listeners so sensors pick up the restored data immediately
+             self.async_update_listeners()
+             return
+
+        _LOGGER.info("Last update (%s) is outdated or missing. Fetching fresh data.", 
+                     self.last_update.strftime("%Y-%m-%d %H:%M:%S") if self.last_update else "None")
+        await self.async_refresh()
 
     def _schedule_next_update(self):
         """Calculate and set next update time based on Atmos update schedule."""

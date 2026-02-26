@@ -19,18 +19,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
-
+ 
     client = AtmosEnergyApiClient(username, password, source="coordinator")
     coordinator = AtmosEnergyDataUpdateCoordinator(hass, client, entry)
-
-    # Trigger first refresh in background to avoid blocking HA UI/startup
-    hass.async_create_task(coordinator.async_refresh())
-
+ 
+    # Load history first to get the last update time
+    await coordinator._async_load_history()
+    
+    # Trigger smart refresh that respects the last update time
+    hass.async_create_task(coordinator.async_setup_refresh())
+ 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
-
+ 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
+    # Register services
+    async def handle_populate_past_usage(call):
+        """Handle the populate_past_usage service call."""
+        file_path = call.data.get("file_path")
+        coordinators = hass.data[DOMAIN].values()
+        if not coordinators:
+            _LOGGER.error("No Atmos Energy coordinators found to handle service call")
+            return
+            
+        coordinator = next(iter(coordinators))
+        await coordinator.async_import_historical_xls(file_path)
+
+    async def handle_refresh_current_usage(call):
+        """Handle the refresh_current_usage service call."""
+        coordinators = hass.data[DOMAIN].values()
+        if not coordinators:
+            return
+        
+        coordinator = next(iter(coordinators))
+        # Trigger an immediate refresh regardless of the schedule
+        await coordinator.async_refresh()
+
+    hass.services.async_register(DOMAIN, "populate_past_usage", handle_populate_past_usage)
+    hass.services.async_register(DOMAIN, "refresh_current_usage", handle_refresh_current_usage)
+
     # Listen for option changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 

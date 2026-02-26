@@ -49,6 +49,7 @@ async def async_setup_entry(
         entities = [
             AtmosEnergyUsageSensor(coordinator, entry, account_id),
             AtmosEnergyCostSensor(coordinator, entry, account_id),
+            AtmosEnergyGasPriceSensor(coordinator, entry, account_id),
             AtmosEnergyDaysRemainingSensor(coordinator, entry, account_id),
         ]
 
@@ -93,7 +94,7 @@ class AtmosEnergyUsageSensor(AtmosEnergyBaseSensor):
     """
 
     _attr_device_class = SensorDeviceClass.GAS
-    _attr_state_class = None  # No state class - display only!
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "CCF"
     _attr_name = "Gas usage (Current Billing Period)"
     _attr_suggested_object_id = f"{DOMAIN}_usage"
@@ -423,3 +424,24 @@ class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
             "avg_temp": self.coordinator.data.get(ATTR_AVG_TEMP),
             "billing_month": self.coordinator.data.get(ATTR_BILLING_MONTH),
         }
+
+
+class AtmosEnergyGasPriceSensor(AtmosEnergyBaseSensor):
+    """Representation of the current gas price per CCF (for Energy Dashboard)."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "USD/CCF"  # Energy Dashboard expects currency/unit
+    _attr_name = "Gas price per CCF"
+    _attr_suggested_object_id = f"{DOMAIN}_gas_price"
+    _attr_icon = "mdi:cash-multiple"
+
+    def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, account_id)
+        self._attr_unique_id = f"{DOMAIN}_{account_id}_gas_price"
+
+    @property
+    def native_value(self):
+        """Return the current variable rate per CCF."""
+        return self.coordinator.get_current_variable_rate()

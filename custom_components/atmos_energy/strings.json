@@ -101,5 +101,21 @@
                 "daily_advanced": "Daily Data + Advanced Prediction (Mid-Tex Only)"
             }
         }
+    },
+    "services": {
+        "populate_past_usage": {
+            "name": "Populate Past Usage",
+            "description": "Import historical daily gas usage data from an Atmos Energy XLS spreadsheet. Note that this is specifically for DAILY usage spreadsheets, not monthly.",
+            "fields": {
+                "file_path": {
+                    "name": "File Path",
+                    "description": "The path to the Atmos Energy XLS file (e.g., /config/dailyUsage.xls)."
+                }
+            }
+        },
+        "refresh_current_usage": {
+            "name": "Refresh Current Usage",
+            "description": "Manually trigger a refresh of the current usage and billing data from the Atmos Energy portal."
+        }
     }
 }
