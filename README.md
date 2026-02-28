@@ -97,6 +97,22 @@ This integration delivers high cost accuracy for Mid-Tex customers by:
 
 ---
 
+## 🔄 Upgrading to v0.8.0
+
+Version 0.8.0 introduces a massive improvement to historical accuracy by switching costs directly to the Home Assistant Statistics API. Because this fundamentally changes how data is recorded, **a clean wipe of old data is highly recommended** to avoid duplicate entities or jagged dashboard graphs.
+
+**Recommended Upgrade Path:**
+1. Navigate to **Settings > Dashboards > Energy** and remove your Atmos Energy gas source.
+2. Navigate to **Settings > Devices & Services** and delete the Atmos Energy integration.
+3. Restart Home Assistant completely.
+4. Navigate to **Developer Tools > Statistics**. Look for any remaining `atmos_energy...` or `sensor.atmos_energy...` entities and click the **Fix Issue** (or remove) button to purge old data from the database.
+5. Install v0.8.0 via HACS or manually.
+6. Run the setup configuration (entering your login and preferences).
+7. Follow the **Setting Up from Scratch** instructions above to re-import your past `.xls` statements for a perfectly clean historical record.
+8. Re-add the new Statistics entities back to your Energy Dashboard.
+
+---
+
 ## 🚀 Installation
 
 ### Option 1: HACS (Recommended)
