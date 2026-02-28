@@ -49,7 +49,6 @@ async def async_setup_entry(
         entities = [
             AtmosEnergyUsageSensor(coordinator, entry, account_id),
             AtmosEnergyCostSensor(coordinator, entry, account_id),
-            AtmosEnergyGasPriceSensor(coordinator, entry, account_id),
             AtmosEnergyDaysRemainingSensor(coordinator, entry, account_id),
         ]
 
@@ -86,15 +85,17 @@ class AtmosEnergyBaseSensor(CoordinatorEntity, SensorEntity):
 class AtmosEnergyUsageSensor(AtmosEnergyBaseSensor):
     """Representation of an Atmos Energy Usage Sensor (Display Only).
     
-    This sensor shows the current billing period total for display purposes.
-    It does NOT have state_class to prevent Energy Dashboard from tracking it.
+    This sensor shows the cumulative usage for the current billing period.
+    It resets to zero at the start of each new billing period.
     
-    Historical daily usage is imported via Statistics API in the coordinator,
-    which ensures the Energy Dashboard shows usage on the correct dates.
+    It does NOT have a state_class so it does not appear in the Energy Dashboard
+    source list. Users should add the external statistic (atmos_energy:usage_...)
+    to the Energy Dashboard instead, and link the Gas Price per CCF sensor for
+    cost tracking.
     """
 
     _attr_device_class = SensorDeviceClass.GAS
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = None  # Display only — Energy Dashboard uses the external statistic
     _attr_native_unit_of_measurement = "CCF"
     _attr_name = "Gas usage (Current Billing Period)"
     _attr_suggested_object_id = f"{DOMAIN}_usage"
@@ -284,6 +285,13 @@ class AtmosEnergyDaysRemainingSensor(AtmosEnergyBaseSensor):
         
         # Ensure both datetimes are timezone-aware for comparison
         now = dt_util.now()
+        
+        # If loaded from JSON persistence, it might be a string
+        if isinstance(next_read_dt, str):
+            next_read_dt = dt_util.parse_datetime(next_read_dt)
+            if not next_read_dt:
+                return None
+                
         if next_read_dt.tzinfo is None:
             next_read_dt = dt_util.as_local(next_read_dt)
         
@@ -297,6 +305,9 @@ class AtmosEnergyDaysRemainingSensor(AtmosEnergyBaseSensor):
             return {"account_id": self._account_id}
         
         next_read_dt = self.coordinator.data.get("next_meter_read_dt")
+        
+        if next_read_dt and isinstance(next_read_dt, str):
+            next_read_dt = dt_util.parse_datetime(next_read_dt)
         
         return {
             "account_id": self._account_id,
@@ -425,23 +436,3 @@ class AtmosEnergyMonthlyUsageSensor(AtmosEnergyBaseSensor):
             "billing_month": self.coordinator.data.get(ATTR_BILLING_MONTH),
         }
 
-
-class AtmosEnergyGasPriceSensor(AtmosEnergyBaseSensor):
-    """Representation of the current gas price per CCF (for Energy Dashboard)."""
-
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "USD/CCF"  # Energy Dashboard expects currency/unit
-    _attr_name = "Gas price per CCF"
-    _attr_suggested_object_id = f"{DOMAIN}_gas_price"
-    _attr_icon = "mdi:cash-multiple"
-
-    def __init__(self, coordinator, entry: ConfigEntry, account_id: str):
-        """Initialize the sensor."""
-        super().__init__(coordinator, entry, account_id)
-        self._attr_unique_id = f"{DOMAIN}_{account_id}_gas_price"
-
-    @property
-    def native_value(self):
-        """Return the current variable rate per CCF."""
-        return self.coordinator.get_current_variable_rate()

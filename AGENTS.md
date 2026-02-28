@@ -39,11 +39,12 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 - **Conditional Grid Search**: Full ML optimization (21 iterations) only runs when 10+ new data points are added. Otherwise, a quick update using existing balance temperature is performed.
 - **Smart Scheduling**: Updates scheduled for 7 AM local time daily (aligned with Atmos's ~6 AM data refresh) instead of fixed intervals.
 - **Incremental Storage**: Only new/modified history records are written to storage, not the entire dict.
-- **Statistics API Integration (v0.7.1+)**:
+- **Statistics API Integration (v0.8.0+)**:
     - **Concept**: Utility data is often delayed (24h+). Standard sensors (`state_class: total_increasing`) cause Home Assistant to attribute delayed data to the wrong day.
     - **Pattern**: Disable `state_class` on the usage sensor (`None`) to make it display-only. Use `async_add_external_statistics` to push historical data into the DB with the correct timestamps.
-    - **Logic**: Statistics must include both `state` (daily value) and `sum` (cumulative total across all history) to be valid for the Energy Dashboard.
-    - **Metadata**: Specify `unit_class="volume"` and `mean_type=None` (be aware of DB IntegrityErrors when specifying `mean_type` as `None` if the column is NOT NULL but empty).
+    - **Parallel Cost Statistics**: For Energy Dashboard cost tracking, rely on the `stat_cost` method. Create a parallel external statistic (`domain:cost_<id>`) that calculates the exact per-day cost including pro-rated fixed charges, WNA, and taxes, rather than trying to provide a dynamic price sensor.
+    - **Logic**: Statistics must include both `state` (daily value) and `sum` (cumulative total across all history) to be valid for the Energy Dashboard. Predecessor sums must be retrieved dynamically to prevent negative spikes.
+    - **Historical Import**: Use the `populate_past_usage` service to import backdated XLS files. This relies on the same statistics infrastructure.
 
 ### 4. Home Assistant Integration Standards
 - **Device Support**: The integration is classified as a `device`. Entities are associated with the device using `has_entity_name = True`.

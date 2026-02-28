@@ -44,7 +44,7 @@ This integration supports three modes of operation to balance data granularity f
 
 | Sensor | Monthly | Daily | Daily Advanced | `state_class` |
 | :--- | :---: | :---: | :---: | :--- |
-| **Gas usage (Current)** | | ✅ | ✅ | `None` (Statistics API) |
+| **Gas usage (Current)** | | ✅ | ✅ | `None` (Use Statistics API) |
 | **Days remaining** | | ✅ | ✅ | `None` |
 | **Estimated cost** | | | ✅ | `total` |
 | **Predicted Usage (7d)** | | | ✅ | `None` |
@@ -55,15 +55,29 @@ This integration supports three modes of operation to balance data granularity f
 
 ## ⚡ Energy Dashboard Integration (Daily Mode)
 
-Atmos Energy data is typically delayed by 24 hours. To ensure your gas usage appears on the **correct day** in Home Assistant, this integration uses the **Statistics API** instead of tracking the sensor state.
+Atmos Energy data is typically delayed by 24 hours. To ensure your gas usage and calculated costs appear on the **correct day** in Home Assistant, this integration uses the **Statistics API** instead of tracking the sensor state.
 
-### How to add to your Dashboard:
-1.  Go to **Settings > Dashboards > Energy**.
-2.  Under **Gas Consumption**, click **Add Gas Source**.
-3.  Search for **Atmos Energy Daily Usage**. 
-    > [!TIP]
-    > Do **not** select `sensor.atmos_energy_gas_usage` (it will not appear in the list). Look for the entry labeled `Atmos Energy Daily Usage` or `atmos_energy:usage_...`.
-4.  Data will populate historically after the first successful fetch (usually at 7 AM).
+As of v0.8.0, the integration generates both **Daily Usage (CCF)** and **Daily Cost (USD)** statistics dynamically. The daily cost perfectly pro-rates your fixed monthly charge and applies all variable WNA, GCR, URI, and tax formulas for that specific day.
+
+### Setting Up from Scratch (For Best Accuracy)
+To get full historical accuracy extending back months or years before you installed the integration:
+1. Log into your Atmos Energy account on the web and download your historical "daily usage" `.xls` files.
+2. Place these files in your Home Assistant `www` folder.
+3. Go to **Developer Tools > Services**.
+4. Run the `atmos_energy.populate_past_usage` service, typing the filename (e.g., `january_usage.xls`) into the `file_path` field. Run this service for your files in **chronological order** (oldest first, newest last).
+5. Once historical data is loaded, you can now run the `atmos_energy.refresh_current_usage` service to pull the latest days up to the present.
+
+### How to configure the Energy Dashboard:
+1. Go to **Settings > Dashboards > Energy**.
+2. Under **Gas Consumption**, click **Add Gas Source**.
+3. **Gas consumption**: Select `atmos_energy:usage_<your_account_id>` (look for the entry with the gas burner icon).
+    > [!WARNING]
+    > Do **not** select `sensor.atmos_energy_gas_usage` as the gas source. You must use the external statistic ID.
+4. **Costs**: Select the third option: ☑ **Use an entity tracking total costs**.
+5. **Entity**: Select `atmos_energy:cost_<your_account_id>` (look for the entry with the USD sign).
+6. Click **Save**.
+
+The dashboard will take about an hour or two to recalculate and display your fully accurate historical usage and daily-calculated bill costs.
 
 ---
 

@@ -80,7 +80,7 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
-                    vol.Required(CONF_OPERATION_MODE, default=MODE_DAILY_ADVANCED): selector.SelectSelector(
+                    vol.Required(CONF_OPERATION_MODE, default=MODE_MONTHLY): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=[MODE_MONTHLY, MODE_DAILY, MODE_DAILY_ADVANCED],
                             translation_key="operation_mode",
@@ -227,7 +227,7 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(CONF_PASSWORD, default=self._data.get(CONF_PASSWORD)): str,
                 vol.Required(
                     CONF_OPERATION_MODE, 
-                    default=self._data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
+                    default=self._data.get(CONF_OPERATION_MODE, MODE_MONTHLY)
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[MODE_MONTHLY, MODE_DAILY, MODE_DAILY_ADVANCED],

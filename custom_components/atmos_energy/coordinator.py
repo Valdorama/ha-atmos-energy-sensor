@@ -15,7 +15,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, slugify
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
-    async_import_statistics,
+    async_add_external_statistics,
     statistics_during_period,
     get_last_statistics,
     StatisticMetaData,
@@ -164,11 +164,11 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         parsed_history.sort(key=lambda x: x["_dt"])
         sorted_history = parsed_history
 
-        username = self.config_entry.data.get(CONF_USERNAME, "unknown").lower()
-        # Entity ID format: sensor.atmos_energy_<username>_usage
-        # Use HA's official slugify to match entity ID generation perfectly
-        safe_username = slugify(username)
-        statistic_id = f"sensor.{DOMAIN}_{safe_username}_usage"
+        # External statistic IDs must be valid slugs: lowercase, start with a letter.
+        # Config entry IDs can start with digits and contain uppercase, so we slugify
+        # and prefix with "usage_" to guarantee a letter-first slug.
+        safe_entry_id = slugify(self.config_entry.entry_id)
+        statistic_id = f"{DOMAIN}:usage_{safe_entry_id}"
 
         # Try to find the current cumulative sum from the database
         # to ensure we don't cause negative spikes in the Energy Dashboard.
@@ -263,11 +263,12 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Logic error determining continuity sum for %s: %s", statistic_id, e)
             # We still continue with cumulative_sum = 0.0 to avoid crashing the whole update
 
+        username = self.config_entry.data.get(CONF_USERNAME, "unknown")
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
-            name=f"Atmos Energy Usage ({username})",
-            source="recorder",  # Internal sensor statistics use 'recorder' source
+            name=f"Atmos Energy Daily Usage ({username})",
+            source=DOMAIN,  # External statistics must use the integration domain
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfVolume.CENTUM_CUBIC_FEET,
             unit_class="volume",
@@ -301,7 +302,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             return
 
         try:
-            async_import_statistics(self.hass, metadata, statistics)
+            async_add_external_statistics(self.hass, metadata, statistics)
             _LOGGER.info(
                 "Successfully imported %d daily usage statistics to %s",
                 len(statistics),
@@ -309,6 +310,94 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             )
         except Exception as e:
             _LOGGER.error("Failed to add external statistics: %s", e)
+
+        # ===== IMPORT COST STATISTICS ====================================
+        # Build a parallel cost statistic so the Energy Dashboard can show
+        # accurate daily costs (WNA + GCR + URI + tax) instead of a simple
+        # price-per-CCF multiplication.
+        cost_statistic_id = f"{DOMAIN}:cost_{safe_entry_id}"
+
+        # Determine the predecessor cost cumulative sum (same pattern as usage).
+        cost_cumulative_sum = 0.0
+        try:
+            cost_stats = await get_instance(self.hass).async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                start_of_import - timedelta(days=365),
+                start_of_import,
+                {cost_statistic_id},
+                "day",
+                None,
+                {"sum"}
+            )
+
+            if cost_stats and cost_statistic_id in cost_stats and cost_stats[cost_statistic_id]:
+                valid_cost_stats = [
+                    s for s in cost_stats[cost_statistic_id]
+                    if (
+                        lambda sv: sv < start_of_import
+                    )(
+                        dt_util.utc_from_timestamp(s["start"])
+                        if isinstance(s.get("start"), (int, float))
+                        else s["start"]
+                    )
+                ]
+                if valid_cost_stats:
+                    cost_cumulative_sum = valid_cost_stats[-1].get("sum", 0.0)
+                    _LOGGER.debug("Found predecessor cost sum for %s: $%.2f", cost_statistic_id, cost_cumulative_sum)
+
+            if cost_cumulative_sum == 0.0:
+                last_cost_stats = await get_instance(self.hass).async_add_executor_job(
+                    get_last_statistics, self.hass, 1, cost_statistic_id, True, {"sum"}
+                )
+                if last_cost_stats and cost_statistic_id in last_cost_stats:
+                    cost_cumulative_sum = last_cost_stats[cost_statistic_id][0].get("sum", 0.0)
+                    _LOGGER.debug("Fallback cost predecessor sum: $%.2f", cost_cumulative_sum)
+
+        except Exception as e:
+            _LOGGER.debug("Could not determine predecessor cost sum for %s: %s", cost_statistic_id, e)
+
+        # Build cost StatisticData list.
+        cost_statistics = []
+        for record in sorted_history:
+            dt = record["_dt"]
+            usage = record.get("usage")
+            if usage is None:
+                continue
+            try:
+                usage_val = float(usage)
+                daily_cost = self._calculate_daily_cost_for_date(usage_val)
+                cost_cumulative_sum += daily_cost
+                timestamp_utc = dt_util.as_utc(dt)
+                cost_statistics.append(StatisticData(
+                    start=timestamp_utc,
+                    state=daily_cost,
+                    sum=cost_cumulative_sum,
+                ))
+            except Exception:
+                continue
+
+        if cost_statistics:
+            cost_metadata = StatisticMetaData(
+                has_mean=False,
+                has_sum=True,
+                name="Atmos Energy Daily Cost",
+                source=DOMAIN,
+                statistic_id=cost_statistic_id,
+                unit_of_measurement="USD",
+            )
+            try:
+                async_add_external_statistics(self.hass, cost_metadata, cost_statistics)
+                _LOGGER.info(
+                    "Successfully imported %d daily cost statistics to %s (total: $%.2f)",
+                    len(cost_statistics),
+                    cost_statistic_id,
+                    cost_cumulative_sum,
+                )
+            except Exception as e:
+                _LOGGER.error("Failed to add cost statistics: %s", e)
+        else:
+            _LOGGER.debug("No cost statistics to import for %s", cost_statistic_id)
 
     async def async_import_historical_xls(self, file_path: str):
         """Import historical daily usage from a local XLS file."""
@@ -695,6 +784,26 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Could not parse next meter read date: %s", date_str)
         return None
 
+    def _calculate_daily_cost_for_date(self, usage: float) -> float:
+        """Calculate the accurate cost for a single day's usage.
+
+        Reuses calculate_total_cost with pro_rate_days=1 to correctly
+        pro-rate the fixed monthly charge for one day, while applying
+        full WNA, GCR, URI and tax on the variable portion.
+
+        Args:
+            usage: Daily gas usage in CCF.
+
+        Returns:
+            Cost in USD for that day's usage.
+        """
+        result = self.calculate_total_cost(
+            usage=usage,
+            include_fixed=True,
+            pro_rate_days=1,
+        )
+        return result["total"]
+
     def calculate_total_cost(
         self, 
         usage: float, 
@@ -726,10 +835,16 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         consumption_rate = float(options.get("usage_rate", 0.78))
         consumption_charge = usage * consumption_rate
         
-        # WNA charge (use provided or calculate)
-        if wna_charge is None:
+        # WNA charge
+        # If a total wna_charge is strictly provided (e.g. for a full bill), use it.
+        # Otherwise, calculate it proportionally using wna_factor (rate per CCF) so 
+        # we don't accidentally apply a full month's WNA charge to a single day.
+        if wna_charge is not None:
+            pass # Use the explicit charge provided
+        else:
             wna_info = self.data.get("wna_calculated", {}) if self.data else {}
-            wna_charge = wna_info.get("wna_charge", 0.0)
+            wna_factor = float(wna_info.get("wna_factor", 0.0))
+            wna_charge = usage * wna_factor
         
         # GCR charge
         gcr_rate = float(self.current_gcr_rate or options.get("gcr_rate", 1.17))
@@ -767,34 +882,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             "variable_rate_per_ccf": round((consumption_charge + wna_charge + gcr_charge + uri_charge + tax_amount) / usage, 4) if usage > 0 else 0.0
         }
 
-    def get_current_variable_rate(self) -> float:
-        """Calculate the current variable cost per CCF (including tax).
-        
-        This is used by the Energy Dashboard to track costs as prices change.
-        """
-        options = self.config_entry.options
-        
-        consumption_rate = float(options.get("usage_rate", 0.78))
-        gcr_rate = float(self.current_gcr_rate or options.get("gcr_rate", 1.17))
-        uri_rate = float(options.get("uri_surcharge", 0.018431))
-        
-        # WNA is variable but is calculated based on historical billing period.
-        # For the "Price per CCF" sensor, we use the average WNA factor from the current data.
-        wna_factor = 0.0
-        if self.data:
-            wna_info = self.data.get("wna_calculated", {})
-            wna_factor = wna_info.get("wna_factor", 0.0)
-        elif self._history:
-            # If we have history but no current data yet (on startup), we can't easily
-            # estimate WNA, so we'll stay at 0.0 until the first refresh.
-            wna_factor = 0.0
-            
-        # Total rate before tax
-        variable_rate = consumption_rate + gcr_rate + uri_rate + (wna_factor * consumption_rate)
-        
-        # Apply tax
-        tax_pct = float(options.get("tax_percent", 8.0))
-        return round(variable_rate * (1 + (tax_pct / 100.0)), 4)
+
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
