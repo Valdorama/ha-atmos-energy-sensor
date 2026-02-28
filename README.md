@@ -62,19 +62,19 @@ As of v0.8.0, the integration generates both **Daily Usage (CCF)** and **Daily C
 ### Setting Up from Scratch (For Best Accuracy)
 To get full historical accuracy extending back months or years before you installed the integration:
 1. Log into your Atmos Energy account on the web and download your historical "daily usage" `.xls` files.
-2. Place these files in your Home Assistant `www` folder.
+2. Place these files somewhere accessible to Home Assistant (e.g., your `www` folder or `config` directory).
 3. Go to **Developer Tools > Services**.
-4. Run the `atmos_energy.populate_past_usage` service, typing the filename (e.g., `january_usage.xls`) into the `file_path` field. Run this service for your files in **chronological order** (oldest first, newest last).
+4. Run the `atmos_energy.populate_past_usage` service, typing the absolute or config-relative path to the file (e.g., `www/january_usage.xls`) into the `file_path` field. Run this service for your files in **chronological order** (oldest first, newest last).
 5. Once historical data is loaded, you can now run the `atmos_energy.refresh_current_usage` service to pull the latest days up to the present.
 
 ### How to configure the Energy Dashboard:
 1. Go to **Settings > Dashboards > Energy**.
 2. Under **Gas Consumption**, click **Add Gas Source**.
-3. **Gas consumption**: Select `atmos_energy:usage_<your_account_id>` (look for the entry with the gas burner icon).
+3. **Gas consumption**: Select **Atmos Energy Daily Usage** (look for the entry with the graph icon, as it is a statistic).
     > [!WARNING]
     > Do **not** select `sensor.atmos_energy_gas_usage` as the gas source. You must use the external statistic ID.
-4. **Costs**: Select the third option: ☑ **Use an entity tracking total costs**.
-5. **Entity**: Select `atmos_energy:cost_<your_account_id>` (look for the entry with the USD sign).
+4. **Costs**: Select the second option: ☑ **Use an entity tracking total costs**.
+5. **Entity**: Select **Atmos Energy Daily Cost** (look for the entry with the graph icon).
 6. Click **Save**.
 
 The dashboard will take about an hour or two to recalculate and display your fully accurate historical usage and daily-calculated bill costs.
