@@ -1050,8 +1050,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         now = dt_util.now()
         
         # Calculate when the most recent scheduled update SHOULD have happened
-        # (the 7 AM today, or 7 AM yesterday if it's not 7 AM yet)
-        scheduled_today = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        # (the 8 AM today, or 8 AM yesterday if it's not 8 AM yet)
+        scheduled_today = now.replace(hour=8, minute=0, second=0, microsecond=0)
         reference_time = scheduled_today
         if now < scheduled_today:
              reference_time = scheduled_today - timedelta(days=1)
@@ -1060,7 +1060,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         # then we've already updated for this cycle.
         if self.last_update and self.data and self.last_update >= reference_time:
              _LOGGER.info(
-                 "Skipping startup fetch; last update (%s) is recent. Next update at 07:00.",
+                 "Skipping startup fetch; last update (%s) is recent. Next update at 08:00.",
                  self.last_update.strftime("%Y-%m-%d %H:%M:%S")
              )
              self._schedule_next_update()
@@ -1075,7 +1075,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
     def _schedule_next_update(self):
         """Calculate and set next update time based on Atmos update schedule."""
         now = dt_util.now()
-        next_update = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        next_update = now.replace(hour=8, minute=0, second=0, microsecond=0)
         if next_update <= now:
             next_update += timedelta(days=1)
         time_until_next = next_update - now

@@ -37,7 +37,7 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 - **Centralized Heavy Lifting**: Weather service calls (`get_forecasts`), WNA math, and date parsing are performed **once** in the `Coordinator`. Sensors are "dumb" and only display pre-calculated values from `coordinator.data`.
 - **GCR PDF Discovery**: The `GCRRateFetcher` uses Gatsby `page-data.json` discovery to find the dynamic monthly static PDF link without needing a browser.
 - **Conditional Grid Search**: Full ML optimization (21 iterations) only runs when 10+ new data points are added. Otherwise, a quick update using existing balance temperature is performed.
-- **Smart Scheduling**: Updates scheduled for 7 AM local time daily (aligned with Atmos's ~6 AM data refresh) instead of fixed intervals.
+- **Smart Scheduling**: Updates scheduled for 8 AM local time daily (aligned with Atmos's ~7 AM data refresh) instead of fixed intervals.
 - **Incremental Storage**: Only new/modified history records are written to storage, not the entire dict.
 - **Statistics API Integration (v0.8.0+)**:
     - **Concept**: Utility data is often delayed (24h+). Standard sensors (`state_class: total_increasing`) cause Home Assistant to attribute delayed data to the wrong day.

@@ -143,7 +143,7 @@ If advanced prediction is enabled, you will be guided through:
 *   **Weather Entity**: Select a local weather source (e.g., `weather.home`) for 7-day forecasting.
 
 ## 🔍 Troubleshooting
-- **Frequency**: Data is fetched daily at 7 AM (aligned with Atmos's data refresh) to minimize portal load.
+- **Frequency**: Data is fetched daily at 8 AM (aligned with Atmos's data refresh) to minimize portal load.
 - **Login Issues**: Ensure you can log in to [Atmos Energy](https://www.atmosenergy.com/) directly and have accepted any new Terms of Service.
 - **GCR Fetching**: If the integration cannot fetch the latest rate PDF, it will fall back to your manually entered GCR rate and log a warning.
 - **New Operation Modes (v0.7.2)**:
