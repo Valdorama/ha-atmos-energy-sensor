@@ -125,12 +125,12 @@ class AtmosEnergyApiClient:
         lower_url = url.lower()
         
         if not allow_login and ("login.html" in lower_url or "authenticate.html" in lower_url):
-            _LOGGER.warning("Detected redirect to login page: %s", url)
+            _LOGGER.debug("Detected redirect to login page: %s", url)
             raise AuthenticationError("Session expired or redirected to login")
 
         if "successerrormessage.html" in lower_url:
-            _LOGGER.warning("Detected redirect to portal error page: %s", url)
-            raise APIError("Atmos Energy portal returned an error page")
+            _LOGGER.debug("Detected redirect to portal error page: %s", url)
+            raise AuthenticationError("Atmos Energy portal returned an error page")
 
     async def _verify_content(self, content: bytes) -> None:
         """Check content for unexpected HTML or error messages."""
@@ -141,8 +141,8 @@ class AtmosEnergyApiClient:
         stripped_content = content.lstrip()
         if stripped_content.startswith((b"<!DOCTYP", b"<html", b"<HTML")):
             try:
-                # OPTIMIZATION: Only scan the first 10,000 characters for performance
-                html_text = stripped_content[:10000].decode('utf-8', errors='replace').lower()
+                # OPTIMIZATION: Only scan the first 50,000 characters for performance
+                html_text = stripped_content[:50000].decode('utf-8', errors='replace').lower()
             except Exception:
                 return
 
@@ -159,7 +159,7 @@ class AtmosEnergyApiClient:
             ]
             for ind in indicators:
                 if ind in html_text:
-                    _LOGGER.warning("Found login indicator '%s' in HTML response", ind)
+                    _LOGGER.debug("Found login indicator '%s' in HTML response", ind)
                     raise AuthenticationError(f"Portal returned a login page instead of expected data (matched: {ind})")
             
             # Error and Session Indicators - these describe failures or state changes
@@ -178,7 +178,7 @@ class AtmosEnergyApiClient:
             ]
             for err in errors:
                 if err in html_text:
-                    _LOGGER.warning("Found session error indicator '%s' in HTML response", err)
+                    _LOGGER.debug("Found session error indicator '%s' in HTML response", err)
                     raise AuthenticationError(f"Atmos Energy portal returned an error or session-ended: {err}")
 
     async def _get_form_tokens(self, content: bytes) -> dict[str, str]:
@@ -194,6 +194,9 @@ class AtmosEnergyApiClient:
         if await self.check_session():
             _LOGGER.debug("[%s] Session is still valid, skipping login.", self._source)
             return
+
+        if self._session:
+            self._session.cookie_jar.clear()
 
         _LOGGER.debug("[%s] Logging in user: %s***", self._source, self._username[:3])
         
@@ -484,6 +487,8 @@ class AtmosEnergyApiClient:
             
             _LOGGER.debug("Next meter read date not found on landing page")
             return None
+        except AuthenticationError:
+            raise
         except Exception as e:
             _LOGGER.warning("Error parsing next meter read date: %s", e)
             return None

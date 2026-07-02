@@ -1,7 +1,7 @@
 """Historical Normal Degree Days (NDD) for Mid-Tex weather stations.
 
-Data source: Atmos Energy WNA Report (June 2025)
-Based on: 10-year rolling average (2015-2024)
+Data source: Atmos Energy WNA Report (June 2026)
+Based on: 10-year rolling average (2016-2025)
 Update frequency: Annually (June)
 """
 
@@ -9,45 +9,45 @@ Update frequency: Annually (June)
 # Format: {station_id: {month: ndd}}
 MID_TEX_NDD = {
     "austin": {
-        11: 206,  # November
-        12: 425,  # December
-        1: 493,   # January
-        2: 315,   # February
-        3: 179,   # March
+        11: 208,  # November
+        12: 429,  # December
+        1: 498,   # January
+        2: 318,   # February
+        3: 181,   # March
         4: 44,    # April
         # May-Oct: No WNA season
     },
     "dallas": {
-        11: 311,
-        12: 595,
-        1: 699,
-        2: 484,
-        3: 289,
-        4: 84,
+        11: 314,
+        12: 601,
+        1: 706,
+        2: 489,
+        3: 292,
+        4: 85,
     },
     "waco": {
-        11: 221,
-        12: 448,
-        1: 531,
-        2: 355,
-        3: 194,
+        11: 223,
+        12: 452,
+        1: 536,
+        2: 359,
+        3: 196,
         4: 49,
     },
     "abilene": {
-        11: 289,
-        12: 579,
-        1: 610,
-        2: 439,
-        3: 245,
-        4: 79,
+        11: 292,
+        12: 585,
+        1: 616,
+        2: 443,
+        3: 247,
+        4: 80,
     },
     "wichita_falls": {
-        11: 358,
-        12: 671,
-        1: 690,
-        2: 515,
-        3: 296,
-        4: 106,
+        11: 362,
+        12: 678,
+        1: 697,
+        2: 520,
+        3: 299,
+        4: 107,
     },
 }
 

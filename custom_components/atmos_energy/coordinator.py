@@ -266,6 +266,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         username = self.config_entry.data.get(CONF_USERNAME, "unknown")
         metadata = StatisticMetaData(
             has_mean=False,
+            mean_type=0,
             has_sum=True,
             name=f"Atmos Energy Daily Usage ({username})",
             source=DOMAIN,  # External statistics must use the integration domain
@@ -380,6 +381,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         if cost_statistics:
             cost_metadata = StatisticMetaData(
                 has_mean=False,
+                mean_type=0,
                 has_sum=True,
                 name="Atmos Energy Daily Cost",
                 source=DOMAIN,
