@@ -387,6 +387,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 source=DOMAIN,
                 statistic_id=cost_statistic_id,
                 unit_of_measurement="USD",
+                unit_class=None,
             )
             try:
                 async_add_external_statistics(self.hass, cost_metadata, cost_statistics)

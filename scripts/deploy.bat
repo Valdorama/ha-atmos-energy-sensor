@@ -7,7 +7,7 @@ echo Source: %SOURCE_DIR%
 echo Destination: %DEST_DIR%
 echo.
 
-robocopy "%SOURCE_DIR%" "%DEST_DIR%" /E /PURGE /XD __pycache__
+robocopy "%SOURCE_DIR%" "%DEST_DIR%" /E /PURGE /IS /IT /XD __pycache__
 
 if %ERRORLEVEL% GEQ 8 (
     echo.
