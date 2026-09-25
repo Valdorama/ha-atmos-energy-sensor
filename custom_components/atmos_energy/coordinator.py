@@ -9,6 +9,7 @@ from typing import Any
 import aiohttp
 import pandas as pd
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -928,7 +929,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             
         except AuthenticationError as err:
             self.config_entry.async_start_reauth(self.hass)
-            raise UpdateFailed(f"Authentication failed: {err}") from err
+            raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
         except (APIError, DataParseError, aiohttp.ClientError) as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
         except Exception as err:

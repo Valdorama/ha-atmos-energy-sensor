@@ -221,8 +221,13 @@ class AtmosEnergyApiClient:
             data=tokens, 
             headers={**self._common_headers, 'Referer': login_url}
         )
-        await self._verify_response_headers(status, effective_url, allow_login=True)
-        await self._verify_content(content)
+        try:
+            await self._verify_response_headers(status, effective_url, allow_login=True)
+            await self._verify_content(content)
+        except AuthenticationError as e:
+            if "error page" in str(e):
+                _LOGGER.debug("[%s] Login failed with error page. HTML snippet: %s", self._source, content[:2000].decode('utf-8', errors='replace'))
+            raise
 
         # 3. Visit Landing Page to activate session
         landing_url = f"{self._base_url}/accountcenter/usagehistory/UsageHistoryLanding.html"
