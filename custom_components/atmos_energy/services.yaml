@@ -9,7 +9,14 @@ populate_past_usage:
       example: /config/dailyUsage.xls
       selector:
         text:
+    config_entry:
+      name: Account
+      description: The Atmos Energy entry to import into. Required when more than one account is set up.
+      required: false
+      selector:
+        config_entry:
+          integration: atmos_energy
 
 refresh_current_usage:
   name: Refresh Current Usage
-  description: Manually trigger a refresh of the current usage and billing data from the Atmos Energy portal.
+  description: Manually trigger a refresh of the current usage and billing data from the Atmos Energy portal, for every configured account.

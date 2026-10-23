@@ -18,6 +18,7 @@ from .const import (
     ATTR_BILL_DATE,
     CONF_WEATHER_ENTITY,
     CONF_OPERATION_MODE,
+    CONF_SERVICE_ADDRESS,
     ATTR_METER_READ_DATE,
     ATTR_AVG_TEMP,
     ATTR_BILLING_MONTH,
@@ -33,7 +34,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Atmos Energy sensor platform."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    account_id = entry.data.get(CONF_USERNAME, "unknown")
+    # The entry's unique_id: the username for single-account logins (and entries made
+    # before multi-account support), the account number otherwise. Keeps existing IDs stable.
+    account_id = entry.unique_id or entry.data.get(CONF_USERNAME, "unknown")
     mode = entry.data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
     
     if mode == MODE_MONTHLY:
@@ -74,9 +77,10 @@ class AtmosEnergyBaseSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self) -> dict[str, Any]:
         """Return device information."""
+        street = self._entry.data.get(CONF_SERVICE_ADDRESS, "").split(",")[0]
         return {
             "identifiers": {(DOMAIN, self._account_id)},
-            "name": "Atmos Energy",
+            "name": f"Atmos Energy {street.title()}" if street else "Atmos Energy",
             "manufacturer": "Atmos Energy",
             "model": "Gas Meter",
         }

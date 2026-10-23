@@ -19,6 +19,8 @@ from .const import (
     CONF_GCR_RATE,
     CONF_URI_SURCHARGE,
     CONF_AUTO_FETCH_GCR,
+    CONF_ACCOUNT_NUMBER,
+    CONF_SERVICE_ADDRESS,
     MODE_MONTHLY,
     MODE_DAILY,
     MODE_DAILY_ADVANCED
@@ -29,43 +31,58 @@ from .wna.ndd_data import WEATHER_STATION_CONFIG
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _account_selector(accounts: list[dict[str, str]]) -> selector.SelectSelector:
+    """Dropdown of accounts, labelled by service address."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(
+                    value=a["account_number"],
+                    label=f"{a['address']} ({a['account_number']})" if a["address"] else a["account_number"],
+                )
+                for a in accounts
+            ],
+            mode=selector.SelectSelectorMode.LIST,
+        )
+    )
+
+
+def _configured_account_numbers(hass, exclude_entry_id: str | None = None) -> set[str]:
+    """Account numbers already used by other Atmos Energy entries."""
+    return {
+        entry.data[CONF_ACCOUNT_NUMBER]
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(CONF_ACCOUNT_NUMBER) and entry.entry_id != exclude_entry_id
+    }
+
+
 class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Atmos Energy."""
 
     VERSION = 1
-    
+
     def __init__(self):
         """Initialize."""
         self._user_data = {}
         self._options = {}
+        self._accounts: list[dict[str, str]] = []
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step (Credentials)."""
         errors = {}
 
         if user_input is not None:
-            await self.async_set_unique_id(user_input[CONF_USERNAME])
-            self._abort_if_unique_id_configured()
-
             username = user_input[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
 
             client = AtmosEnergyApiClient(username, password, source="setup")
-            
+
             try:
-                await client.login()
-                self._user_data = user_input
-                
-                # Branch based on mode
-                mode = user_input.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
-                if mode == MODE_DAILY_ADVANCED:
-                    return await self.async_step_weather_station()
-                
-                return self.async_create_entry(
-                    title=self._user_data[CONF_USERNAME], 
-                    data=self._user_data,
-                    options={}
-                )
+                accounts = await client.get_accounts()
+                if len(accounts) <= 1:
+                    # Single-account login: validate the full session as before
+                    await client.login()
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
             except (APIError, Exception) as err:
@@ -73,6 +90,16 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             finally:
                 await client.close()
+
+            if not errors:
+                self._user_data = user_input
+                if len(accounts) > 1:
+                    self._accounts = accounts
+                    return await self.async_step_account()
+
+                await self.async_set_unique_id(username)
+                self._abort_if_unique_id_configured()
+                return await self._async_step_after_account()
 
         return self.async_show_form(
             step_id="user",
@@ -92,12 +119,52 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_account(self, user_input=None):
+        """Pick one account (service address) when the login has several."""
+        configured = _configured_account_numbers(self.hass)
+        available = [a for a in self._accounts if a["account_number"] not in configured]
+        if not available:
+            return self.async_abort(reason="already_configured")
+
+        if user_input is not None:
+            number = user_input[CONF_ACCOUNT_NUMBER]
+            await self.async_set_unique_id(number)
+            self._abort_if_unique_id_configured()
+            address = next((a["address"] for a in available if a["account_number"] == number), "")
+            self._user_data[CONF_ACCOUNT_NUMBER] = number
+            self._user_data[CONF_SERVICE_ADDRESS] = address
+            return await self._async_step_after_account()
+
+        return self.async_show_form(
+            step_id="account",
+            data_schema=vol.Schema({vol.Required(CONF_ACCOUNT_NUMBER): _account_selector(available)}),
+        )
+
+    async def _async_step_after_account(self):
+        """Branch based on mode."""
+        mode = self._user_data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
+        if mode == MODE_DAILY_ADVANCED:
+            return await self.async_step_weather_station()
+
+        return self.async_create_entry(
+            title=self._entry_title(),
+            data=self._user_data,
+            options={}
+        )
+
+    def _entry_title(self) -> str:
+        """Username, plus the street address for multi-account logins."""
+        address = self._user_data.get(CONF_SERVICE_ADDRESS)
+        if address:
+            return f"{self._user_data[CONF_USERNAME]} ({address.split(',')[0]})"
+        return self._user_data[CONF_USERNAME]
+
     async def async_step_weather_station(self, user_input=None):
         """Step 2: Select weather station."""
         if user_input is not None:
             self._options.update(user_input)
             return await self.async_step_cost()
-        
+
         stations = {id: info["name"] for id, info in WEATHER_STATION_CONFIG.items()}
         return self.async_show_form(
             step_id="weather_station",
@@ -131,7 +198,7 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._options.update(user_input)
             return self.async_create_entry(
-                title=self._user_data[CONF_USERNAME], 
+                title=self._entry_title(),
                 data=self._user_data,
                 options=self._options
             )
@@ -153,7 +220,8 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             password = user_input[CONF_PASSWORD]
             client = AtmosEnergyApiClient(username, password, source="reauth")
             try:
-                await client.login()
+                # Credentials check only; account selection is not a reauth concern
+                await client.get_accounts()
                 self.hass.config_entries.async_update_entry(
                     self._get_reauth_entry(),
                     data={**self._get_reauth_entry().data, CONF_PASSWORD: password}
@@ -189,6 +257,7 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
         self._config_entry = config_entry
         self._options = dict(config_entry.options)
         self._data = dict(config_entry.data)
+        self._accounts: list[dict[str, str]] = []
 
     async def async_step_init(self, user_input=None):
         """Step 1: Credentials and Toggle."""
@@ -200,25 +269,37 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
                 CONF_OPERATION_MODE: user_input[CONF_OPERATION_MODE],
             })
-            
+
             # Validate credentials
             client = AtmosEnergyApiClient(self._data[CONF_USERNAME], self._data[CONF_PASSWORD], source="options")
+            accounts = []
             try:
-                await client.login()
-                
-                # Sync data back to the config entry if credentials changed
-                self.hass.config_entries.async_update_entry(self._config_entry, data=self._data)
-                
-                if self._data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
-                    return await self.async_step_weather_station()
-                
-                return self.async_create_entry(title="", data={})
+                accounts = await client.get_accounts()
+                if len(accounts) <= 1:
+                    await client.login()
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
             except Exception:
                 errors["base"] = "cannot_connect"
             finally:
                 await client.close()
+
+            current = self._data.get(CONF_ACCOUNT_NUMBER)
+            if not errors and current and accounts and current not in [a["account_number"] for a in accounts]:
+                errors["base"] = "account_not_found"
+
+            if not errors:
+                # Sync data back to the config entry if credentials changed
+                self.hass.config_entries.async_update_entry(self._config_entry, data=self._data)
+
+                # Entries made before multi-account support have no account; let them pick one.
+                # An entry that already has one keeps it: switching would mix two meters'
+                # history and statistics under one entry.
+                if len(accounts) > 1 and not current:
+                    self._accounts = accounts
+                    return await self.async_step_account()
+
+                return await self._async_step_after_account()
 
         return self.async_show_form(
             step_id="init",
@@ -238,6 +319,34 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
             }),
             errors=errors,
         )
+
+    async def async_step_account(self, user_input=None):
+        """Pick the account for an entry created before multi-account support."""
+        configured = _configured_account_numbers(self.hass, exclude_entry_id=self._config_entry.entry_id)
+        available = [a for a in self._accounts if a["account_number"] not in configured]
+        if not available:
+            return self.async_abort(reason="already_configured")
+
+        if user_input is not None:
+            number = user_input[CONF_ACCOUNT_NUMBER]
+            self._data[CONF_ACCOUNT_NUMBER] = number
+            self._data[CONF_SERVICE_ADDRESS] = next(
+                (a["address"] for a in available if a["account_number"] == number), ""
+            )
+            self.hass.config_entries.async_update_entry(self._config_entry, data=self._data)
+            return await self._async_step_after_account()
+
+        return self.async_show_form(
+            step_id="account",
+            data_schema=vol.Schema({vol.Required(CONF_ACCOUNT_NUMBER): _account_selector(available)}),
+        )
+
+    async def _async_step_after_account(self):
+        """Branch based on mode."""
+        if self._data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
+            return await self.async_step_weather_station()
+
+        return self.async_create_entry(title="", data={})
 
     async def async_step_weather_station(self, user_input=None):
         """Step 2: Region."""

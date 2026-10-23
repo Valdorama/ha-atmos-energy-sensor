@@ -46,6 +46,14 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
     - **Logic**: Statistics must include both `state` (daily value) and `sum` (cumulative total across all history) to be valid for the Energy Dashboard. Predecessor sums must be retrieved dynamically to prevent negative spikes.
     - **Historical Import**: Use the `populate_past_usage` service to import backdated XLS files. This relies on the same statistics infrastructure.
 
+### 3b. Multiple Accounts (Service Addresses)
+- **Portal behavior**: A login with several accounts lands on a "Summary of Accounts" page after the auth POST. Until one is opened with `landing/singleAccount.html?accountNumber=N`, every usage-history page (and the XLS downloads) returns the generic "systems are temporarily unavailable" error page. The selection lasts for the session.
+- **Pattern**: One config entry per account. `AtmosEnergyApiClient._authenticate()` parses the summary page into `client.accounts`; `login()` then calls `_select_account()`. Single-account logins land on the account directly, parse to `[]`, and skip selection entirely.
+- **Identity**: Multi-account entries use the account number as `unique_id`; single-account and pre-existing entries keep the username. Sensors and devices key off `entry.unique_id`, so existing entity IDs never change. Don't switch an entry's account: history and statistics are per entry.
+- **Storage**: History is per entry (`atmos_energy_history_<entry_id>`). The old shared `atmos_energy_history` file is moved once to the first pre-existing entry that loads.
+- **Errors**: The "temporarily unavailable" page is an `APIError`, not an `AuthenticationError`, so it never starts reauth. A multi-account entry with no account raises `AccountSelectionError` and opens a Repairs issue.
+- **Tests**: `tests_ha/` runs against a real HA (`pytest tests_ha`). It is separate from `tests/` because those modules mock `homeassistant.*` in `sys.modules` at import time.
+
 ### 4. Home Assistant Integration Standards
 - **Device Support**: The integration is classified as a `device`. Entities are associated with the device using `has_entity_name = True`.
 - **Naming**: Prefix entity names with `atmos_energy_` to ensure unique identification in the HA registry.

@@ -12,6 +12,8 @@ CONF_TAX_PERCENT = "tax_percent"
 CONF_WEATHER_ENTITY = "weather_entity"
 CONF_OPERATION_MODE = "operation_mode"
 CONF_WEATHER_STATION = "weather_station"
+CONF_ACCOUNT_NUMBER = "account_number"
+CONF_SERVICE_ADDRESS = "service_address"
 
 # Operation Modes
 MODE_MONTHLY = "monthly"
@@ -35,5 +37,15 @@ ATTR_BILLING_MONTH = "billing_month"
 DEFAULT_BASE_LOAD = 25.03
 DEFAULT_HEATING_COEFF = 0.097
 DEFAULT_BALANCE_TEMP = 65.0
-STORAGE_KEY = f"{DOMAIN}_history"
+STORAGE_KEY = f"{DOMAIN}_history"  # Pre-multi-account: one file shared by every entry
 STORAGE_VERSION = 1
+
+
+def history_storage_key(entry_id: str) -> str:
+    """Per-entry history store key."""
+    return f"{STORAGE_KEY}_{entry_id}"
+
+
+def account_selection_issue_id(entry_id: str) -> str:
+    """Repairs issue raised when a multi-account login has no account selected."""
+    return f"account_selection_{entry_id}"
