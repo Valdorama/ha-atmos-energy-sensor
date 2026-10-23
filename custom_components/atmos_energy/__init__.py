@@ -7,8 +7,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, CONF_ACCOUNT_NUMBER, STORAGE_VERSION, history_storage_key
+from .const import DOMAIN, CONF_ACCOUNT_NUMBER, STORAGE_VERSION, history_storage_key, account_selection_issue_id
 from .api import AtmosEnergyApiClient
 from .coordinator import AtmosEnergyDataUpdateCoordinator
 
@@ -89,5 +90,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete the entry's history file when the entry is deleted."""
+    """Delete the entry's history file and any open repair when the entry is deleted."""
     await Store(hass, STORAGE_VERSION, history_storage_key(entry.entry_id)).async_remove()
+    ir.async_delete_issue(hass, DOMAIN, account_selection_issue_id(entry.entry_id))

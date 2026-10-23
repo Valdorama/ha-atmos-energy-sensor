@@ -44,3 +44,8 @@ STORAGE_VERSION = 1
 def history_storage_key(entry_id: str) -> str:
     """Per-entry history store key."""
     return f"{STORAGE_KEY}_{entry_id}"
+
+
+def account_selection_issue_id(entry_id: str) -> str:
+    """Repairs issue raised when a multi-account login has no account selected."""
+    return f"account_selection_{entry_id}"

@@ -13,6 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util, slugify
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
@@ -37,6 +38,7 @@ from .const import (
     CONF_ACCOUNT_NUMBER,
     CONF_SERVICE_ADDRESS,
     history_storage_key,
+    account_selection_issue_id,
     DEFAULT_BASE_LOAD,
     DEFAULT_HEATING_COEFF,
     DEFAULT_BALANCE_TEMP,
@@ -47,7 +49,7 @@ from .const import (
     MODE_DAILY_ADVANCED
 )
 from .api import AtmosEnergyApiClient
-from .exceptions import AuthenticationError, APIError, DataParseError
+from .exceptions import AuthenticationError, APIError, DataParseError, AccountSelectionError
 from .wna.calculator import WNACalculator
 from .wna.gcr_fetcher import GCRRateFetcher
 
@@ -959,11 +961,25 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             
             self.last_update = dt_util.now()
             await self._async_save_history()
+            ir.async_delete_issue(self.hass, DOMAIN, account_selection_issue_id(self.config_entry.entry_id))
             return data
             
         except AuthenticationError as err:
             self.config_entry.async_start_reauth(self.hass)
             raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
+        except AccountSelectionError as err:
+            # Setup has already succeeded by the time the first fetch runs, so without
+            # this the reason only reaches the log and the entry looks healthy.
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                account_selection_issue_id(self.config_entry.entry_id),
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="account_selection",
+                translation_placeholders={"title": self.config_entry.title, "error": str(err)},
+            )
+            raise UpdateFailed(f"Error communicating with API: {err}") from err
         except (APIError, DataParseError, aiohttp.ClientError) as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
         except Exception as err:

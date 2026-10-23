@@ -115,6 +115,12 @@
             "already_configured": "Every account on this login is already set up"
         }
     },
+    "issues": {
+        "account_selection": {
+            "title": "Choose an Atmos Energy account for {title}",
+            "description": "{error}\n\nThis login has more than one Atmos Energy account (service address), and the portal returns no usage data until one is chosen. Go to **Settings > Devices & Services > Atmos Energy**, select **Configure** on this entry, and pick the account in the **Choose Account** step. This message clears after the next successful update."
+        }
+    },
     "selector": {
         "operation_mode": {
             "options": {
