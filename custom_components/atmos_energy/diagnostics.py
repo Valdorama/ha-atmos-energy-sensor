@@ -24,6 +24,8 @@ async def async_get_config_entry_diagnostics(
         "data_config": {
             "username": entry.data.get("username", "")[:3] + "***",
             "has_password": "password" in entry.data,
+            "account_number": "***" + entry.data["account_number"][-4:] if entry.data.get("account_number") else None,
+            "has_service_address": bool(entry.data.get("service_address")),
         },
         "coordinator": {
             "last_update_success": coordinator.last_update_success,

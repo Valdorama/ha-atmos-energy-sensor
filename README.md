@@ -64,7 +64,7 @@ To get full historical accuracy extending back months or years before you instal
 1. Log into your Atmos Energy account on the web and download your historical "daily usage" `.xls` files.
 2. Place these files somewhere accessible to Home Assistant (e.g., your `www` folder or `config` directory).
 3. Go to **Developer Tools > Services**.
-4. Run the `atmos_energy.populate_past_usage` service, typing the absolute or config-relative path to the file (e.g., `www/january_usage.xls`) into the `file_path` field. Run this service for your files in **chronological order** (oldest first, newest last).
+4. Run the `atmos_energy.populate_past_usage` service, typing the absolute or config-relative path to the file (e.g., `www/january_usage.xls`) into the `file_path` field. Run this service for your files in **chronological order** (oldest first, newest last). If you track more than one account, also pick the account in the `config_entry` field.
 5. Once historical data is loaded, you can now run the `atmos_energy.refresh_current_usage` service to pull the latest days up to the present.
 
 ### How to configure the Energy Dashboard:
@@ -141,6 +141,13 @@ If advanced prediction is enabled, you will be guided through:
 *   **Rates**: Enter your consumption rate and fixed fees (defaults provided).
 *   **GCR Auto-fetch**: Enable this to automatically track monthly gas price fluctuations.
 *   **Weather Entity**: Select a local weather source (e.g., `weather.home`) for 7-day forecasting.
+
+### Multiple Accounts (Service Addresses)
+If your login has more than one Atmos Energy account, setup asks which service address to track. Each config entry tracks one account, with its own sensors, rates, history and Energy Dashboard statistics. To track another address, add the integration again with the same login; addresses already set up are not offered again.
+
+An entry created before multi-account support, on a login with several accounts, fails with "This Atmos Energy login has N accounts and none is selected". Open the entry's **Configure** dialog and pick the account; its existing sensors are kept.
+
+With more than one entry, `atmos_energy.populate_past_usage` needs the `config_entry` field to say which account the spreadsheet belongs to, and `atmos_energy.refresh_current_usage` refreshes every account.
 
 ## 🔍 Troubleshooting
 - **Frequency**: Data is fetched daily at 8 AM (aligned with Atmos's data refresh) to minimize portal load.

@@ -34,6 +34,9 @@ from .const import (
     CONF_GCR_RATE,
     STORAGE_KEY,
     STORAGE_VERSION,
+    CONF_ACCOUNT_NUMBER,
+    CONF_SERVICE_ADDRESS,
+    history_storage_key,
     DEFAULT_BASE_LOAD,
     DEFAULT_HEATING_COEFF,
     DEFAULT_BALANCE_TEMP,
@@ -49,6 +52,9 @@ from .wna.calculator import WNACalculator
 from .wna.gcr_fetcher import GCRRateFetcher
 
 _LOGGER = logging.getLogger(__name__)
+
+# Serializes the one-time move of the old shared history file, so only one entry claims it
+_LEGACY_STORE_LOCK = asyncio.Lock()
 
 class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Atmos Energy data."""
@@ -68,8 +74,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         self.gcr_fetcher = GCRRateFetcher(hass)
         self.current_gcr_rate = None
         
-        # Persistent storage for history
-        self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        # Persistent storage for history, one file per entry (each entry is one meter)
+        self._store = Store(hass, STORAGE_VERSION, history_storage_key(entry.entry_id))
         self._history = {} # Keyed by date string YYYY-MM-DD
         self._unsaved_keys = set()  # Track keys that need to be saved
         
@@ -86,12 +92,41 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=SCAN_INTERVAL,
         )
 
+    def _street(self) -> str:
+        """First line of the service address; set only for multi-account logins."""
+        return self.config_entry.data.get(CONF_SERVICE_ADDRESS, "").split(",")[0]
+
+    def _statistic_label(self) -> str:
+        """Tells this entry's statistics apart in the Energy dashboard."""
+        return self._street() or self.config_entry.data.get(CONF_USERNAME, "unknown")
+
+    async def _async_migrate_legacy_store(self):
+        """Move the old shared history file into this entry's store, once.
+
+        Only entries created before multi-account support can own it; those keep the
+        username as their unique_id, while new multi-account entries use the account number.
+        """
+        if self.config_entry.unique_id == self.config_entry.data.get(CONF_ACCOUNT_NUMBER):
+            return
+        async with _LEGACY_STORE_LOCK:
+            if await self._store.async_load() is not None:
+                return
+            legacy = Store(self.hass, STORAGE_VERSION, STORAGE_KEY)
+            stored = await legacy.async_load()
+            if stored is None:
+                return
+            await self._store.async_save(stored)
+            await legacy.async_remove()
+            _LOGGER.info("Moved shared Atmos Energy history into the store for entry %s", self.config_entry.entry_id)
+
     async def _async_load_history(self):
         """Load history from storage."""
         try:
+            await self._async_migrate_legacy_store()
+
             # Load GCR cache
             await self.gcr_fetcher.async_load()
-            
+
             stored = await self._store.async_load()
             if stored:
                 self._history = stored.get("history", {})
@@ -264,12 +299,11 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Logic error determining continuity sum for %s: %s", statistic_id, e)
             # We still continue with cumulative_sum = 0.0 to avoid crashing the whole update
 
-        username = self.config_entry.data.get(CONF_USERNAME, "unknown")
         metadata = StatisticMetaData(
             has_mean=False,
             mean_type=0,
             has_sum=True,
-            name=f"Atmos Energy Daily Usage ({username})",
+            name=f"Atmos Energy Daily Usage ({self._statistic_label()})",
             source=DOMAIN,  # External statistics must use the integration domain
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfVolume.CENTUM_CUBIC_FEET,
@@ -384,7 +418,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 has_mean=False,
                 mean_type=0,
                 has_sum=True,
-                name="Atmos Energy Daily Cost",
+                name="Atmos Energy Daily Cost" + (f" ({self._street()})" if self._street() else ""),
                 source=DOMAIN,
                 statistic_id=cost_statistic_id,
                 unit_of_measurement="USD",

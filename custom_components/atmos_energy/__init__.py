@@ -5,8 +5,10 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_ACCOUNT_NUMBER, STORAGE_VERSION, history_storage_key
 from .api import AtmosEnergyApiClient
 from .coordinator import AtmosEnergyDataUpdateCoordinator
 
@@ -16,11 +18,13 @@ PLATFORMS = ["sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Atmos Energy from a config entry."""
-    
+
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
- 
-    client = AtmosEnergyApiClient(username, password, source="coordinator")
+
+    client = AtmosEnergyApiClient(
+        username, password, source="coordinator", account_number=entry.data.get(CONF_ACCOUNT_NUMBER)
+    )
     coordinator = AtmosEnergyDataUpdateCoordinator(hass, client, entry)
  
     # Load history first to get the last update time
@@ -38,23 +42,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def handle_populate_past_usage(call):
         """Handle the populate_past_usage service call."""
         file_path = call.data.get("file_path")
-        coordinators = hass.data[DOMAIN].values()
+        coordinators = hass.data[DOMAIN]
         if not coordinators:
             _LOGGER.error("No Atmos Energy coordinators found to handle service call")
             return
-            
-        coordinator = next(iter(coordinators))
+
+        # The spreadsheet belongs to one meter, so with several entries the caller must say which
+        entry_id = call.data.get("config_entry")
+        if entry_id:
+            if entry_id not in coordinators:
+                raise ServiceValidationError(f"No loaded Atmos Energy entry with id {entry_id}")
+            coordinator = coordinators[entry_id]
+        elif len(coordinators) == 1:
+            coordinator = next(iter(coordinators.values()))
+        else:
+            raise ServiceValidationError(
+                "Several Atmos Energy accounts are set up; choose one with the config_entry field"
+            )
         await coordinator.async_import_historical_xls(file_path)
 
     async def handle_refresh_current_usage(call):
         """Handle the refresh_current_usage service call."""
-        coordinators = hass.data[DOMAIN].values()
-        if not coordinators:
-            return
-        
-        coordinator = next(iter(coordinators))
-        # Trigger an immediate refresh regardless of the schedule
-        await coordinator.async_refresh()
+        # Trigger an immediate refresh regardless of the schedule, for every account
+        for coordinator in list(hass.data[DOMAIN].values()):
+            await coordinator.async_refresh()
 
     hass.services.async_register(DOMAIN, "populate_past_usage", handle_populate_past_usage)
     hass.services.async_register(DOMAIN, "refresh_current_usage", handle_refresh_current_usage)
@@ -76,3 +87,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.client.close()
 
     return unload_ok
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the entry's history file when the entry is deleted."""
+    await Store(hass, STORAGE_VERSION, history_storage_key(entry.entry_id)).async_remove()

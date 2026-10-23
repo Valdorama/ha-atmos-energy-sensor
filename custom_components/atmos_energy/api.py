@@ -9,7 +9,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from .const import TIMEOUT
-from .exceptions import AuthenticationError, APIError, DataParseError
+from .exceptions import AuthenticationError, APIError, DataParseError, AccountSelectionError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,13 +21,21 @@ class AtmosEnergyApiClient:
         username: str, 
         password: str, 
         session: aiohttp.ClientSession | None = None,
-        source: str = "api"
+        source: str = "api",
+        account_number: str | None = None,
     ) -> None:
-        """Initialize the API client."""
+        """Initialize the API client.
+
+        account_number is only needed when the login has more than one account
+        (service address). The portal then requires picking one per session.
+        """
         self._username = username
         self._password = password
         self._session = session
         self._source = source
+        self._account_number = account_number
+        # Accounts listed on the post-login summary page; empty for single-account logins
+        self.accounts: list[dict[str, str]] = []
         self._base_url = "https://www.atmosenergy.com"
         self._last_request: datetime | None = None
         self._min_request_interval = timedelta(seconds=2)
@@ -181,6 +189,12 @@ class AtmosEnergyApiClient:
                     _LOGGER.debug("Found session error indicator '%s' in HTML response", err)
                     raise AuthenticationError(f"Atmos Energy portal returned an error or session-ended: {err}")
 
+            # Generic portal error page. Seen during outages, and on every usage page
+            # when a multi-account login has no account selected. Not a credentials problem.
+            if "temporarily unavailable" in html_text:
+                _LOGGER.debug("Found portal error page ('temporarily unavailable') in HTML response")
+                raise APIError("Atmos Energy portal returned its 'systems are temporarily unavailable' page")
+
     async def _get_form_tokens(self, content: bytes) -> dict[str, str]:
         """Extract hidden form tokens from HTML."""
         soup = BeautifulSoup(content, 'html.parser')
@@ -189,12 +203,38 @@ class AtmosEnergyApiClient:
             tokens[input_tag['name']] = input_tag['value']
         return tokens
 
-    async def login(self) -> None:
-        """Login to Atmos Energy and initialize the usage session."""
-        if await self.check_session():
-            _LOGGER.debug("[%s] Session is still valid, skipping login.", self._source)
-            return
+    @staticmethod
+    def _parse_accounts(content: bytes) -> list[dict[str, str]]:
+        """Parse the multi-account summary page shown after login.
 
+        Each account is a block like:
+            <p><span class="emphasisLarge">NAME<br/>1111111111</span><br/>
+               100 MAIN ST<br/>ANYTOWN, TX 75001</p>
+            ... <a href="/accountcenter/landing/singleAccount.html?accountNumber=1111111111">
+
+        Single-account logins land on the account itself, with no such links, and get [].
+        """
+        soup = BeautifulSoup(content, 'html.parser')
+        numbers: list[str] = []
+        for link in soup.find_all('a', href=re.compile(r'singleAccount\.html\?accountNumber=\d+')):
+            number = re.search(r'accountNumber=(\d+)', link['href']).group(1)
+            if number not in numbers:
+                numbers.append(number)
+
+        name_spans = soup.find_all('span', class_='emphasisLarge')
+        accounts = []
+        for number in numbers:
+            address = ""
+            span = next((s for s in name_spans if number in s.get_text()), None)
+            if span and span.parent:
+                span_text = set(span.stripped_strings)
+                lines = [t for t in span.parent.stripped_strings if t not in span_text]
+                address = ", ".join(lines)
+            accounts.append({"account_number": number, "address": address})
+        return accounts
+
+    async def _authenticate(self) -> bytes:
+        """Submit the login form. Returns the post-login landing page and fills self.accounts."""
         if self._session:
             self._session.cookie_jar.clear()
 
@@ -228,6 +268,49 @@ class AtmosEnergyApiClient:
             if "error page" in str(e):
                 _LOGGER.debug("[%s] Login failed with error page. HTML snippet: %s", self._source, content[:2000].decode('utf-8', errors='replace'))
             raise
+
+        self.accounts = self._parse_accounts(content)
+        if self.accounts:
+            _LOGGER.debug("[%s] Login has %d accounts", self._source, len(self.accounts))
+        return content
+
+    async def _select_account(self) -> None:
+        """Select the configured account. Required by the portal when the login has several."""
+        if not self._account_number:
+            if len(self.accounts) > 1:
+                raise AccountSelectionError(
+                    f"This Atmos Energy login has {len(self.accounts)} accounts and none is selected. "
+                    "Choose one in the integration's options (Configure)."
+                )
+            return
+
+        known = [a["account_number"] for a in self.accounts]
+        if known and self._account_number not in known:
+            raise AccountSelectionError(
+                f"Account {self._account_number} is not on this login (found: {', '.join(known)})"
+            )
+
+        url = f"{self._base_url}/accountcenter/landing/singleAccount.html"
+        _LOGGER.debug("[%s] Selecting account ***%s", self._source, self._account_number[-4:])
+        status, effective_url, content = await self._request_with_retry(
+            'get', url, params={"accountNumber": self._account_number}, headers=self._common_headers
+        )
+        await self._verify_response_headers(status, effective_url)
+        await self._verify_content(content)
+
+    async def get_accounts(self) -> list[dict[str, str]]:
+        """Log in and return the accounts on this login ([] for single-account logins)."""
+        await self._authenticate()
+        return self.accounts
+
+    async def login(self) -> None:
+        """Login to Atmos Energy and initialize the usage session."""
+        if await self.check_session():
+            _LOGGER.debug("[%s] Session is still valid, skipping login.", self._source)
+            return
+
+        await self._authenticate()
+        await self._select_account()
 
         # 3. Visit Landing Page to activate session
         landing_url = f"{self._base_url}/accountcenter/usagehistory/UsageHistoryLanding.html"
