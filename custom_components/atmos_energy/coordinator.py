@@ -865,7 +865,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         options = self.config_entry.options
         
         # Fixed charge
-        fixed = float(options.get("fixed_cost", 25.03)) if include_fixed else 0.0
+        fixed = float(options.get("fixed_cost", 24.40)) if include_fixed else 0.0
         
         # Pro-rate fixed charge if requested
         if pro_rate_days is not None and include_fixed:

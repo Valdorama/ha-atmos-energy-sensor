@@ -66,37 +66,37 @@ def get_ndd(station_id: str, month: int) -> int:
 
 
 # Weather Station Configuration
-# Source: Mid-Tex Tariff (October 1, 2025)
+# Source: Mid-Tex Tariff (October 1, 2026)
 WEATHER_STATION_CONFIG = {
     "austin": {
         "name": "Austin",
         "base_load_residential": 8.19,      # CCF
         "heat_factor_residential": 0.1394,  # CCF/HDD
-        "commodity_rate": 78.025,           # cents/CCF
+        "commodity_rate": 103.839,          # cents/CCF
     },
     "dallas": {
         "name": "Dallas",
         "base_load_residential": 12.74,
         "heat_factor_residential": 0.2017,
-        "commodity_rate": 78.025,
+        "commodity_rate": 103.839,
     },
     "waco": {
         "name": "Waco",
         "base_load_residential": 9.23,
         "heat_factor_residential": 0.1277,
-        "commodity_rate": 78.025,
+        "commodity_rate": 103.839,
     },
     "abilene": {
         "name": "Abilene",
         "base_load_residential": 9.61,
         "heat_factor_residential": 0.1476,
-        "commodity_rate": 78.025,
+        "commodity_rate": 103.839,
     },
     "wichita_falls": {
         "name": "Wichita Falls",
         "base_load_residential": 10.43,
         "heat_factor_residential": 0.1387,
-        "commodity_rate": 78.025,
+        "commodity_rate": 103.839,
     },
 }
 

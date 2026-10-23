@@ -22,7 +22,7 @@ class WNACalculator:
         
         self.base_load = config.get("base_load_residential", 8.19)
         self.heat_factor = config.get("heat_factor_residential", 0.1394)
-        self.commodity_rate = config.get("commodity_rate", 78.025)
+        self.commodity_rate = config.get("commodity_rate", 103.839)
         
         _LOGGER.debug(
             "WNA Calculator initialized for %s: BL=%.2f, HSF=%.4f, R=%.3f",
