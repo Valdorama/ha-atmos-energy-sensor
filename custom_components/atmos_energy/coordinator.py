@@ -87,9 +87,12 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         self.r_squared = 0.0
         self._last_optimization_count = 0
         self.last_update: datetime | None = None
+        # Set once every past billing period the portal offers has been imported
+        self._backfill_done = False
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=SCAN_INTERVAL,
         )
@@ -132,6 +135,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             stored = await self._store.async_load()
             if stored:
                 self._history = stored.get("history", {})
+                self._backfill_done = stored.get("backfill_done", False)
                 last_update_str = stored.get("last_update")
                 if last_update_str:
                     try:
@@ -158,7 +162,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 if key in self._history:
                     history[key] = self._history[key]
             
-            payload = {"history": history}
+            payload = {"history": history, "backfill_done": self._backfill_done}
             if self.last_update:
                 payload["last_update"] = self.last_update.isoformat()
             
@@ -941,14 +945,17 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             # 1. Daily usage specific tasks
             if daily_usage:
                 await self._update_gcr_rate()
-                await self._async_import_daily_statistics(data)
+                # Past billing periods go to statistics and the model only;
+                # data["history"] stays the current period.
+                history = await self._async_add_past_periods(data.get("history", []))
+                await self._async_import_statistics_list(history)
                 
                 # 2. Advanced Prediction Logic (Only MODE_DAILY_ADVANCED)
                 if mode == MODE_DAILY_ADVANCED:
                     await self._update_advanced_metrics(data)
 
                 # 3. Synchronize History
-                await self._sync_history(data)
+                await self._sync_history({**data, "history": history})
 
             # 4. Basic validation
             usage = data.get("usage")
@@ -987,6 +994,38 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Unexpected error: {err}") from err
         finally:
             self._schedule_next_update()
+
+    async def _async_add_past_periods(self, current: list[dict]) -> list[dict]:
+        """Return past billing periods' daily records followed by the current period's.
+
+        The first time, every past period the portal offers is fetched (about two
+        years). After that only the latest past period is, so days that leave the
+        current period at a meter read are still imported if Home Assistant missed
+        the last update before it. Portal errors here never fail the update; the
+        current period is still imported.
+        """
+        try:
+            periods = await self.client.get_billing_periods()
+            wanted = periods if not self._backfill_done else periods[:1]
+            # Oldest first, so a day in two periods keeps the newer period's value
+            past = await self.client.get_daily_history(list(reversed(wanted)))
+        except (APIError, DataParseError, aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.warning("Could not fetch past billing periods, importing the current one only: %s", err)
+            return current
+
+        if periods and not self._backfill_done:
+            self._backfill_done = True
+            _LOGGER.info("Backfilled %d days from %d past billing periods", len(past), len(periods))
+        return self._merge_history(past + current)
+
+    def _merge_history(self, records: list[dict]) -> list[dict]:
+        """Drop repeated days, keeping each day's last record, in date order."""
+        by_day: dict[datetime, dict] = {}
+        for record in records:
+            day = self._parse_date(record.get("date", ""))
+            if day is not None:
+                by_day[day] = record
+        return [by_day[day] for day in sorted(by_day)]
 
     async def _update_gcr_rate(self):
         """Update GCR rate if enabled."""
@@ -1112,7 +1151,11 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
              
         # If we have a last_update AND data, and it's AFTER the reference_time, 
         # then we've already updated for this cycle.
-        if self.last_update and self.data and self.last_update >= reference_time:
+        backfill_pending = (
+            not self._backfill_done
+            and self.config_entry.data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED) != MODE_MONTHLY
+        )
+        if self.last_update and self.data and self.last_update >= reference_time and not backfill_pending:
              _LOGGER.info(
                  "Skipping startup fetch; last update (%s) is recent. Next update at 08:00.",
                  self.last_update.strftime("%Y-%m-%d %H:%M:%S")
