@@ -61,7 +61,9 @@ async def test_startup_refresh_skip(hass, mock_coordinator):
     # Set last update to 8 AM today (7 AM window passed)
     now = dt_util.now().replace(hour=8, minute=0, second=0, microsecond=0)
     mock_coordinator.last_update = now
-    
+    mock_coordinator.data = {"usage": 15.5}
+    mock_coordinator._backfill_done = True
+
     with patch("homeassistant.util.dt.now", return_value=now), \
          patch.object(mock_coordinator, "async_refresh", new_callable=AsyncMock) as mock_refresh:
         
@@ -84,4 +86,18 @@ async def test_startup_refresh_trigger(hass, mock_coordinator):
         await mock_coordinator.async_setup_refresh()
         
         # Should trigger refresh
+        mock_refresh.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_startup_refresh_when_backfill_pending(hass, mock_coordinator):
+    """A recent update still refreshes at startup until past periods are backfilled."""
+    now = dt_util.now().replace(hour=8, minute=0, second=0, microsecond=0)
+    mock_coordinator.last_update = now
+    mock_coordinator.data = {"usage": 15.5}
+
+    with patch("homeassistant.util.dt.now", return_value=now), \
+         patch.object(mock_coordinator, "async_refresh", new_callable=AsyncMock) as mock_refresh:
+
+        await mock_coordinator.async_setup_refresh()
+
         mock_refresh.assert_called_once()

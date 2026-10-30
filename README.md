@@ -60,13 +60,14 @@ Atmos Energy data is typically delayed by 24 hours. To ensure your gas usage and
 
 As of v0.8.0, the integration generates both **Daily Usage (CCF)** and **Daily Cost (USD)** statistics dynamically. The daily cost pro-rates your fixed monthly charge and applies the consumption charge, gas cost, other per-CCF charges and tax for that specific day (plus WNA in Mid-Tex prediction mode). Each day uses the gas cost published for its own month, so imported past days aren't priced at today's rate.
 
-### Setting Up from Scratch (For Best Accuracy)
-To get full historical accuracy extending back months or years before you installed the integration:
-1. Log into your Atmos Energy account on the web and download your historical "daily usage" `.xls` files.
-2. Place these files somewhere accessible to Home Assistant (e.g., your `www` folder or `config` directory).
-3. Go to **Developer Tools > Services**.
-4. Run the `atmos_energy.populate_past_usage` service, typing the absolute or config-relative path to the file (e.g., `www/january_usage.xls`) into the `file_path` field. Run this service for your files in **chronological order** (oldest first, newest last). If you track more than one account, also pick the account in the `config_entry` field.
-5. Once historical data is loaded, you can now run the `atmos_energy.refresh_current_usage` service to pull the latest days up to the present.
+### Historical Data
+In daily modes, the first update after setup (or after upgrading) imports every past billing period the Atmos portal offers, about two years of daily usage, before the current period. This takes a minute or two, since the portal is asked for one period at a time. After that, each daily update fetches the current period plus the most recent past one, so days at the end of a billing cycle are still imported if Home Assistant was offline at the meter read.
+
+To go back further than the portal's two years, download older "daily usage" `.xls` files from the Atmos website and import them:
+1. Place the files somewhere accessible to Home Assistant (e.g., your `www` folder or `config` directory).
+2. Go to **Developer Tools > Actions**.
+3. Run the `atmos_energy.populate_past_usage` action, typing the absolute or config-relative path to the file (e.g., `www/january_usage.xls`) into the `file_path` field. Run it for your files in **chronological order** (oldest first, newest last). If you track more than one account, also pick the account in the `config_entry` field.
+4. Run the `atmos_energy.refresh_current_usage` action to re-import the portal's two years on top.
 
 ### How to configure the Energy Dashboard:
 1. Go to **Settings > Dashboards > Energy**.

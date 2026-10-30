@@ -321,23 +321,71 @@ class AtmosEnergyApiClient:
 
         _LOGGER.debug("[%s] Login and session initialization successful", self._source)
 
-    async def get_daily_usage(self) -> dict[str, Any]:
-        """Fetch and parse daily usage data."""
+    async def get_daily_usage(self, billing_period: str = "Current") -> dict[str, Any]:
+        """Fetch and parse daily usage data for one billing period."""
         await self.login()
-        
+        return await self._download_daily_usage(billing_period)
+
+    async def _download_daily_usage(self, billing_period: str) -> dict[str, Any]:
+        """Download and parse one billing period's daily usage. Needs a logged-in session."""
         url = f"{self._base_url}/accountcenter/usagehistory/dailyUsageDownload.html"
-        _LOGGER.debug("Fetching usage data from %s", url)
-        
+        _LOGGER.debug("Fetching usage data for billing period %s", billing_period)
+
         status, effective_url, content = await self._request_with_retry(
-            'get', 
-            url, 
-            params={"billingPeriod": "Current"},
+            'get',
+            url,
+            params={"billingPeriod": billing_period},
             headers={**self._common_headers, 'Referer': f"{self._base_url}/accountcenter/usagehistory/dailyUsage.html"}
         )
         await self._verify_response_headers(status, effective_url)
         await self._verify_content(content)
-            
+
         return await self._parse_xls_data(content)
+
+    @staticmethod
+    def _parse_billing_periods(content: bytes) -> list[str]:
+        """Parse the past billing periods offered on the Daily Usage page.
+
+        The page's <select name="billingPeriod"> lists "Current" and then about 24
+        past periods, newest first, with values like "October,2026". A period is
+        named for its bill month, so "October,2026" holds mostly September usage.
+        """
+        soup = BeautifulSoup(content, 'html.parser')
+        select = soup.find('select', {'name': 'billingPeriod'})
+        if select is None:
+            return []
+        periods = []
+        for option in select.find_all('option'):
+            value = (option.get('value') or option.get_text()).strip()
+            if value and value.lower() != "current" and value not in periods:
+                periods.append(value)
+        return periods
+
+    async def get_billing_periods(self) -> list[str]:
+        """Return the past billing periods the portal offers, newest first."""
+        await self.login()
+        url = f"{self._base_url}/accountcenter/usagehistory/dailyUsage.html"
+        status, effective_url, content = await self._request_with_retry('get', url, headers=self._common_headers)
+        await self._verify_response_headers(status, effective_url)
+        await self._verify_content(content)
+        return self._parse_billing_periods(content)
+
+    async def get_daily_history(self, billing_periods: list[str]) -> list[dict[str, Any]]:
+        """Return the daily usage records of several billing periods, in the order given.
+
+        Logs in once for all of them. A period whose file can't be parsed is
+        skipped; login and portal errors are raised.
+        """
+        await self.login()
+        history: list[dict[str, Any]] = []
+        for period in billing_periods:
+            try:
+                data = await self._download_daily_usage(period)
+            except DataParseError as e:
+                _LOGGER.warning("Skipping billing period %s: %s", period, e)
+                continue
+            history.extend(data.get("history", []))
+        return history
 
     async def get_monthly_usage(self) -> dict[str, Any]:
         """Fetch and parse monthly usage data."""
