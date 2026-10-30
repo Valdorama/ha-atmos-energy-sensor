@@ -3,13 +3,13 @@
   "name": "Atmos Energy",
   "version": "0.9.2",
   "integration_type": "device",
-  "documentation": "https://github.com/Valdorama/ha-atmos-energy-sensor",
-  "issue_tracker": "https://github.com/Valdorama/ha-atmos-energy-sensor/issues",
+  "documentation": "https://github.com/marcusjames2/ha-atmos-energy",
+  "issue_tracker": "https://github.com/marcusjames2/ha-atmos-energy/issues",
   "dependencies": [
     "weather"
   ],
   "codeowners": [
-    "@Valdorama"
+    "@marcusjames2"
   ],
   "requirements": [
     "aiohttp>=3.8.0",

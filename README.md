@@ -1,11 +1,13 @@
 # Atmos Energy Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Latest Release](https://img.shields.io/github/v/release/Valdorama/ha-atmos-energy-sensor?color=blue)](https://github.com/Valdorama/ha-atmos-energy-sensor/releases)
-[![License](https://img.shields.io/github/license/Valdorama/ha-atmos-energy-sensor)](https://github.com/Valdorama/ha-atmos-energy-sensor/blob/master/LICENSE)
+[![Latest Release](https://img.shields.io/github/v/release/marcusjames2/ha-atmos-energy?color=blue)](https://github.com/marcusjames2/ha-atmos-energy/releases)
+[![License](https://img.shields.io/github/license/marcusjames2/ha-atmos-energy)](https://github.com/marcusjames2/ha-atmos-energy/blob/main/LICENSE)
 [![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg)](https://buymeacoffee.com/valdorama)
 
 A custom component for Home Assistant to retrieve usage data from [Atmos Energy](https://www.atmosenergy.com/).
+
+This is a fork of Valdorama's [ha-atmos-energy-sensor](https://github.com/Valdorama/ha-atmos-energy-sensor). It adds automatic import of the past billing periods the Atmos portal offers (about two years of daily usage).
 
 **Disclaimer**: This is an unofficial integration and is not affiliated with Atmos Energy. It scrapes the website to retrieve data, so changes to the Atmos Energy website may break this integration.
 
@@ -120,7 +122,7 @@ Version 0.8.0 introduces a massive improvement to historical accuracy by switchi
 1. Ensure [HACS](https://hacs.xyz/) is installed.
 2. Go to **HACS > Integrations**.
 3. Click the **three dots** in the top right corner and select **Custom repositories**.
-4. Add the URL: `https://github.com/Valdorama/ha-atmos-energy-sensor`.
+4. Add the URL: `https://github.com/marcusjames2/ha-atmos-energy`.
 5. Select **Integration** as the category and click **Add**.
 6. Install and restart Home Assistant.
 
