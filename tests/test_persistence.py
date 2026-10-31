@@ -94,6 +94,7 @@ async def test_startup_refresh_when_backfill_pending(hass, mock_coordinator):
     now = dt_util.now().replace(hour=8, minute=0, second=0, microsecond=0)
     mock_coordinator.last_update = now
     mock_coordinator.data = {"usage": 15.5}
+    mock_coordinator.config_entry.options = {"backfill_history": True}
 
     with patch("homeassistant.util.dt.now", return_value=now), \
          patch.object(mock_coordinator, "async_refresh", new_callable=AsyncMock) as mock_refresh:
@@ -101,3 +102,18 @@ async def test_startup_refresh_when_backfill_pending(hass, mock_coordinator):
         await mock_coordinator.async_setup_refresh()
 
         mock_refresh.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_startup_refresh_skip_when_backfill_not_enabled(hass, mock_coordinator):
+    """With the backfill option off, a recent update is never re-fetched at startup."""
+    now = dt_util.now().replace(hour=8, minute=0, second=0, microsecond=0)
+    mock_coordinator.last_update = now
+    mock_coordinator.data = {"usage": 15.5}
+
+    with patch("homeassistant.util.dt.now", return_value=now), \
+         patch.object(mock_coordinator, "async_refresh", new_callable=AsyncMock) as mock_refresh:
+
+        await mock_coordinator.async_setup_refresh()
+
+        mock_refresh.assert_not_called()

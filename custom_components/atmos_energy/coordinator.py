@@ -40,6 +40,7 @@ from .const import (
     STORAGE_VERSION,
     CONF_ACCOUNT_NUMBER,
     CONF_SERVICE_ADDRESS,
+    CONF_BACKFILL_HISTORY,
     history_storage_key,
     account_selection_issue_id,
     DEFAULT_BASE_LOAD,
@@ -420,8 +421,20 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                     get_last_statistics, self.hass, 1, cost_statistic_id, True, {"sum"}
                 )
                 if last_cost_stats and cost_statistic_id in last_cost_stats:
-                    cost_cumulative_sum = last_cost_stats[cost_statistic_id][0].get("sum", 0.0)
-                    _LOGGER.debug("Fallback cost predecessor sum: $%.2f", cost_cumulative_sum)
+                    latest_cost = last_cost_stats[cost_statistic_id][0]
+                    c_start = latest_cost.get("start")
+                    if isinstance(c_start, (int, float)):
+                        c_start = dt_util.utc_from_timestamp(c_start)
+                    # Same rule as the usage sum: a record inside this batch gets
+                    # rewritten below, so it can't be the predecessor.
+                    if c_start and c_start < start_of_import:
+                        cost_cumulative_sum = latest_cost.get("sum", 0.0)
+                        _LOGGER.debug("Fallback cost predecessor sum: $%.2f", cost_cumulative_sum)
+                    else:
+                        _LOGGER.debug(
+                            "Latest cost record (%s) is at or after batch start (%s). Ignoring.",
+                            latest_cost.get("start"), start_of_import
+                        )
 
         except Exception as e:
             _LOGGER.debug("Could not determine predecessor cost sum for %s: %s", cost_statistic_id, e)
@@ -1132,17 +1145,22 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         """
         try:
             periods = await self.client.get_billing_periods()
-            wanted = periods if not self._backfill_done else periods[:1]
+            full_backfill = self._backfill_wanted()
+            wanted = periods if full_backfill else periods[:1]
             # Oldest first, so a day in two periods keeps the newer period's value
             past = await self.client.get_daily_history(list(reversed(wanted)))
         except (APIError, DataParseError, aiohttp.ClientError, asyncio.TimeoutError) as err:
             _LOGGER.warning("Could not fetch past billing periods, importing the current one only: %s", err)
             return current
 
-        if periods and not self._backfill_done:
+        if periods and full_backfill:
             self._backfill_done = True
             _LOGGER.info("Backfilled %d days from %d past billing periods", len(past), len(periods))
         return self._merge_history(past + current)
+
+    def _backfill_wanted(self) -> bool:
+        """True while the one-time bulk backfill is enabled for this entry and hasn't run."""
+        return bool(self.config_entry.options.get(CONF_BACKFILL_HISTORY, False)) and not self._backfill_done
 
     async def _async_repair_meter_read_days(self, records: list[dict]) -> list[dict]:
         """Replace days whose usage is really a meter reading.
@@ -1324,7 +1342,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         # If we have a last_update AND data, and it's AFTER the reference_time, 
         # then we've already updated for this cycle.
         backfill_pending = (
-            not self._backfill_done
+            self._backfill_wanted()
             and self.config_entry.data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED) != MODE_MONTHLY
         )
         if self.last_update and self.data and self.last_update >= reference_time and not backfill_pending:

@@ -24,6 +24,7 @@ from .const import (
     CONF_REGION,
     CONF_FIXED_COST_SUMMER,
     CONF_USE_PUBLISHED_RATES,
+    CONF_BACKFILL_HISTORY,
     MODE_MONTHLY,
     MODE_DAILY,
     MODE_DAILY_ADVANCED
@@ -235,11 +236,7 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._options.update(user_input)
             if self._user_data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
                 return await self.async_step_weather_forecast()
-            return self.async_create_entry(
-                title=self._entry_title(),
-                data=self._user_data,
-                options=self._options
-            )
+            return await self.async_step_backfill()
 
         return self.async_show_form(
             step_id="cost",
@@ -250,11 +247,7 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 4: Select weather entity."""
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(
-                title=self._entry_title(),
-                data=self._user_data,
-                options=self._options
-            )
+            return await self.async_step_backfill()
 
         return self.async_show_form(
             step_id="weather_forecast",
@@ -262,6 +255,23 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_WEATHER_ENTITY): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="weather")
                 ),
+            }),
+        )
+
+    async def async_step_backfill(self, user_input=None):
+        """Final step of the daily modes: offer a one-time import of past billing periods."""
+        if user_input is not None:
+            self._options.update(user_input)
+            return self.async_create_entry(
+                title=self._entry_title(),
+                data=self._user_data,
+                options=self._options
+            )
+
+        return self.async_show_form(
+            step_id="backfill",
+            data_schema=vol.Schema({
+                vol.Required(CONF_BACKFILL_HISTORY, default=True): bool,
             }),
         )
 
@@ -442,19 +452,35 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
             self._options.update(user_input)
             if self._data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
                 return await self.async_step_weather_forecast()
-            return self.async_create_entry(title="", data=self._options)
+            return await self.async_step_backfill()
 
         return self.async_show_form(
             step_id="cost",
             data_schema=_cost_schema(self._options.get(CONF_REGION, DEFAULT_REGION), self._options),
         )
 
-    async def async_step_weather_forecast(self, user_input=None):
-        """Step 4: Weather Entity."""
+    async def async_step_backfill(self, user_input=None):
+        """Final step of the daily modes: one-time import of past billing periods."""
         if user_input is not None:
             self._options.update(user_input)
             # Finish and save all options
             return self.async_create_entry(title="", data=self._options)
+
+        return self.async_show_form(
+            step_id="backfill",
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_BACKFILL_HISTORY,
+                    default=self._options.get(CONF_BACKFILL_HISTORY, False),
+                ): bool,
+            }),
+        )
+
+    async def async_step_weather_forecast(self, user_input=None):
+        """Step 4: Weather Entity."""
+        if user_input is not None:
+            self._options.update(user_input)
+            return await self.async_step_backfill()
 
         return self.async_show_form(
             step_id="weather_forecast",

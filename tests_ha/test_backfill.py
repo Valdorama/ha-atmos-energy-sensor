@@ -82,6 +82,7 @@ def coordinator(hass):
     entry = MockConfigEntry(
         domain=DOMAIN, entry_id="backfill01", unique_id="atmos_user",
         data={"username": "atmos_user", "password": "pw", "operation_mode": "daily"},
+        options={"backfill_history": True},
     )
     entry.add_to_hass(hass)
     client = MagicMock()
@@ -106,6 +107,23 @@ async def test_first_run_backfills_every_period_oldest_first(coordinator):
     # Periods meet end to end: one record per day from 7/6 through 10/28
     assert len(dates) == len(set(dates)) == 26 + 31 + 30 + 28
     assert dates == sorted(dates, key=lambda d: (d[6:], d[:5]))
+
+
+async def test_backfill_off_fetches_latest_period_only(coordinator):
+    coordinator.hass.config_entries.async_update_entry(coordinator.config_entry, options={"backfill_history": False})
+    history = await coordinator._async_add_past_periods(CURRENT)
+
+    coordinator.client.get_daily_history.assert_awaited_once_with(["October,2026"])
+    assert not coordinator._backfill_done
+    assert history[0]["date"] == "09/04/2026"
+
+
+async def test_backfill_option_missing_defaults_to_off(coordinator):
+    coordinator.hass.config_entries.async_update_entry(coordinator.config_entry, options={})
+    await coordinator._async_add_past_periods(CURRENT)
+
+    coordinator.client.get_daily_history.assert_awaited_once_with(["October,2026"])
+    assert not coordinator._backfill_done
 
 
 async def test_later_runs_fetch_only_latest_period(coordinator):
@@ -165,3 +183,29 @@ async def test_update_imports_all_periods_in_one_statistics_call(hass, coordinat
     assert stats[-1]["sum"] == pytest.approx(len(stats))
     # Sensors still see only the current period
     assert data["history"] == CURRENT
+
+
+async def test_cost_sum_ignores_existing_record_inside_the_batch(hass, coordinator):
+    """A cost record at or after the batch start gets rewritten, so it can't seed the sum."""
+    coordinator.client.get_account_data = AsyncMock(return_value={
+        "usage": float(len(CURRENT)),
+        "history": CURRENT,
+        "billing_period_start": "10/06/2026",
+        "next_meter_read_date": None,
+    })
+    inside_batch = dt_util.as_utc(dt_util.parse_datetime("2026-10-01T00:00:00")).timestamp()
+
+    def last_stats(hass_, count, statistic_id, *args):
+        return {statistic_id: [{"start": inside_batch, "sum": 773.16}]}
+
+    with patch("custom_components.atmos_energy.coordinator.statistics_during_period", return_value={}), \
+         patch("custom_components.atmos_energy.coordinator.get_last_statistics", side_effect=last_stats), \
+         patch("custom_components.atmos_energy.coordinator.async_add_external_statistics") as add_stats, \
+         patch.object(coordinator, "_update_gcr_rate", AsyncMock()), \
+         patch.object(coordinator.published_rates, "async_refresh", AsyncMock(return_value=False)), \
+         patch.object(coordinator, "_async_save_history", AsyncMock()):
+        await coordinator._async_update_data()
+
+    cost_calls = [c for c in add_stats.call_args_list if c.args[1]["statistic_id"].startswith(f"{DOMAIN}:cost_")]
+    first = cost_calls[0].args[2][0]
+    assert first["sum"] == pytest.approx(first["state"])  # starts from 0, not 773.16

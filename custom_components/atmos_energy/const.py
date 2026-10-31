@@ -14,6 +14,7 @@ CONF_OPERATION_MODE = "operation_mode"
 CONF_WEATHER_STATION = "weather_station"
 CONF_ACCOUNT_NUMBER = "account_number"
 CONF_SERVICE_ADDRESS = "service_address"
+CONF_BACKFILL_HISTORY = "backfill_history"
 
 # Operation Modes
 MODE_MONTHLY = "monthly"

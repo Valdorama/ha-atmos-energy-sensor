@@ -58,6 +58,13 @@
                 "data": {
                     "password": "Password"
                 }
+            },
+            "backfill": {
+                "title": "Import Past Usage",
+                "description": "Import every past billing period the Atmos portal offers (about two years of daily usage and cost) into Home Assistant's statistics. This runs once, on the first update, and takes a minute or two. Past days are priced at their bill month's gas cost where Atmos still publishes it, otherwise the current one. Leave it off to start from the current billing period.",
+                "data": {
+                    "backfill_history": "Import past billing periods"
+                }
             }
         },
         "error": {
@@ -122,6 +129,13 @@
                 "data": {
                     "weather_entity": "Weather Entity"
                 }
+            },
+            "backfill": {
+                "title": "Import Past Usage",
+                "description": "Turn this on to import every past billing period the portal offers (about two years) on the next update. It runs once: if it has already completed for this account, turning it on again does nothing. Past days are priced at their bill month's gas cost where Atmos still publishes it, otherwise the current one.",
+                "data": {
+                    "backfill_history": "Import past billing periods"
+                }
             }
         },
         "error": {
@@ -184,4 +198,4 @@
             "description": "Manually trigger a refresh of the current usage and billing data from the Atmos Energy portal, for every configured account."
         }
     }
-}
+}

@@ -37,6 +37,8 @@ async def test_daily_mode_asks_region_then_its_rates(hass, flow_client, no_setup
     assert "fixed_cost_summer" not in form
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], form)
+    assert result["step_id"] == "backfill"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"backfill_history": False})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"]["region"] == "kansas"
     assert result["data"]["operation_mode"] == "daily"
@@ -60,6 +62,7 @@ async def test_advanced_mode_outside_mid_tex_skips_weather_station(hass, flow_cl
     result = await hass.config_entries.flow.async_configure(result["flow_id"], defaults(result))
     assert result["step_id"] == "weather_forecast"  # forecasts work in every region
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"backfill_history": False})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["operation_mode"] == "daily_advanced"
     assert "weather_station" not in result["options"]
@@ -76,6 +79,7 @@ async def test_advanced_mode_in_mid_tex_keeps_weather_steps(hass, flow_client, n
     result = await hass.config_entries.flow.async_configure(result["flow_id"], defaults(result))
     assert result["step_id"] == "weather_forecast"
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"backfill_history": False})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["operation_mode"] == "daily_advanced"
     assert result["options"]["region"] == "mid_tex"
@@ -98,6 +102,9 @@ async def test_options_region_change_offers_new_defaults(hass, flow_client, no_s
     assert form["tax_percent"] == 0.0
 
     result = await hass.config_entries.options.async_configure(result["flow_id"], form)
+    assert result["step_id"] == "backfill"
+    assert defaults(result)["backfill_history"] is False  # existing entries stay off
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"backfill_history": False})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["region"] == "virginia"
 
