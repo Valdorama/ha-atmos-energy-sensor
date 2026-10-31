@@ -184,6 +184,7 @@ An entry created before multi-account support, on a login with several accounts,
 With more than one entry, `atmos_energy.populate_past_usage` needs the `config_entry` field to say which account the spreadsheet belongs to, and `atmos_energy.refresh_current_usage` refreshes every account.
 
 ## 🔍 Troubleshooting
+- **Meter readings in daily data**: The portal's daily download occasionally puts the meter reading (thousands of CCF) in a day's consumption. A day above both 100 CCF and 20× the bill period's typical day is treated as one of these: it gets an equal share of what the period's billed usage (from the monthly download) leaves after its other days, and a warning is logged. The period is re-imported on the next update, which also corrects a spike already in the Energy dashboard.
 - **Frequency**: Data is fetched daily at 8 AM (aligned with Atmos's data refresh) to minimize portal load.
 - **Login Issues**: Ensure you can log in to [Atmos Energy](https://www.atmosenergy.com/) directly and have accepted any new Terms of Service.
 - **Gas Cost Fetching**: If the integration cannot fetch the latest rate PDF, it uses the most recent month it has, or else your manually entered gas cost, and logs a warning. It checks again once a day until the new month is published.

@@ -370,6 +370,29 @@ class AtmosEnergyApiClient:
         await self._verify_content(content)
         return self._parse_billing_periods(content)
 
+    async def get_billed_usage(self) -> dict[str, float]:
+        """Billed consumption by billing month, e.g. {"Oct 26": 41.0}, from the monthly download."""
+        await self.login()
+        url = f"{self._base_url}/accountcenter/usagehistory/monthlyUsageDownload.html"
+        status, effective_url, content = await self._request_with_retry(
+            'get',
+            url,
+            headers={**self._common_headers, 'Referer': f"{self._base_url}/accountcenter/usagehistory/usagehistory.html"}
+        )
+        await self._verify_response_headers(status, effective_url)
+        await self._verify_content(content)
+
+        def _parse_impl():
+            df, pd = self._parse_xls_to_dataframe(content)
+            if 'consumption' not in df.columns or 'billing month' not in df.columns:
+                raise DataParseError(f"Missing columns in monthly data. Found: {list(df.columns)}")
+            df['consumption'] = pd.to_numeric(df['consumption'], errors='coerce')
+            df = df.dropna(subset=['consumption', 'billing month'])
+            return {str(m).strip(): float(c) for m, c in zip(df['billing month'], df['consumption'])}
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _parse_impl)
+
     async def get_daily_history(self, billing_periods: list[str]) -> list[dict[str, Any]]:
         """Return the daily usage records of several billing periods, in the order given.
 
@@ -571,7 +594,10 @@ class AtmosEnergyApiClient:
                     }
                     if avg_temp_col and pd.notnull(row[avg_temp_col]):
                         record["avg_temp"] = float(row[avg_temp_col])
-                    
+                    # e.g. "Oct 26"; ties the day to its bill in the monthly download
+                    if 'billing month' in df.columns and pd.notnull(row['billing month']):
+                        record["billing_month"] = str(row['billing month']).strip()
+
                     history.append(record)
             
             total_usage = float(df['consumption'].sum())

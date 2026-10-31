@@ -61,6 +61,11 @@ from .regions import DEFAULT_REGION, SUMMER_MONTHS, WNA_REGION, get_region
 
 _LOGGER = logging.getLogger(__name__)
 
+# A day's usage above both of these (CCF, and times the bill period's typical
+# day) is taken to be a meter reading the portal put in the consumption column.
+_METER_READ_MIN = 100.0
+_METER_READ_FACTOR = 20.0
+
 # Serializes the one-time move of the old shared history file, so only one entry claims it
 _LEGACY_STORE_LOCK = asyncio.Lock()
 
@@ -487,6 +492,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             
             if history:
                 _LOGGER.info("Found %d records in %s, importing...", len(history), file_path)
+                history = await self._async_repair_meter_read_days(history)
                 await self._async_import_statistics_list(history)
             else:
                 _LOGGER.warning("No usage records found in %s. Ensure this is a DAILY usage spreadsheet.", file_path)
@@ -1023,6 +1029,10 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 # Past billing periods go to statistics and the model only;
                 # data["history"] stays the current period.
                 history = await self._async_add_past_periods(data.get("history", []))
+                history = await self._async_repair_meter_read_days(history)
+                current_dates = {r.get("date") for r in data.get("history", [])}
+                if any("reported_usage" in r and r.get("date") in current_dates for r in history):
+                    data["usage"] = sum(r["usage"] for r in history if r.get("date") in current_dates)
 
                 # 2. Advanced Prediction Logic (Only MODE_DAILY_ADVANCED).
                 # Before the statistics import, so daily costs get this update's WNA factor.
@@ -1094,6 +1104,49 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             self._backfill_done = True
             _LOGGER.info("Backfilled %d days from %d past billing periods", len(past), len(periods))
         return self._merge_history(past + current)
+
+    async def _async_repair_meter_read_days(self, records: list[dict]) -> list[dict]:
+        """Replace days whose usage is really a meter reading.
+
+        The portal's daily download sometimes puts the meter reading in the
+        consumption column (seen: 09/28/2026 = 4947, 09/29/2026 = 5056 for a
+        home using 1-2 CCF a day). Each such day gets an equal share of what the
+        bill period's billed usage (monthly download) leaves after its good days,
+        or the period's typical day when the billed usage isn't available.
+        """
+        by_month: dict[str | None, list[int]] = {}
+        for i, record in enumerate(records):
+            by_month.setdefault(record.get("billing_month"), []).append(i)
+
+        repaired = list(records)
+        billed: dict[str, float] | None = None
+        for month, indexes in by_month.items():
+            values = sorted(float(records[i]["usage"]) for i in indexes)
+            typical = values[len(values) // 2]
+            limit = max(_METER_READ_MIN, _METER_READ_FACTOR * typical)
+            bad = [i for i in indexes if float(records[i]["usage"]) > limit]
+            if not bad:
+                continue
+
+            if billed is None:
+                try:
+                    billed = await self.client.get_billed_usage()
+                except (APIError, DataParseError, aiohttp.ClientError, asyncio.TimeoutError) as err:
+                    _LOGGER.warning("Could not fetch billed usage to repair daily data: %s", err)
+                    billed = {}
+            good_total = sum(float(records[i]["usage"]) for i in indexes if i not in bad)
+            month_billed = billed.get(month) if month else None
+            if month_billed is not None and month_billed >= good_total:
+                fill = (month_billed - good_total) / len(bad)
+            else:
+                fill = typical
+            for i in bad:
+                _LOGGER.warning(
+                    "Atmos reported %s CCF for %s, which looks like a meter reading; using %.2f CCF",
+                    records[i]["usage"], records[i].get("date"), fill,
+                )
+                repaired[i] = {**records[i], "usage": fill, "reported_usage": records[i]["usage"]}
+        return repaired
 
     def _merge_history(self, records: list[dict]) -> list[dict]:
         """Drop repeated days, keeping each day's last record, in date order."""
@@ -1180,7 +1233,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             date_str = record.get("date")
             if date_str:
                 key = date_str.split(" ")[0]
-                if key not in self._history:
+                # Also replace a stored day whose usage changed, e.g. a repaired meter-read day
+                if key not in self._history or self._history[key].get("usage") != record.get("usage"):
                     self._history[key] = record
                     self._unsaved_keys.add(key)
                     updated = True
