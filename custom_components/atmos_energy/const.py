@@ -19,9 +19,12 @@ CONF_SERVICE_ADDRESS = "service_address"
 MODE_MONTHLY = "monthly"
 MODE_DAILY = "daily"
 MODE_DAILY_ADVANCED = "daily_advanced"
-CONF_GCR_RATE = "gcr_rate"
-CONF_URI_SURCHARGE = "uri_surcharge"
+CONF_GCR_RATE = "gcr_rate"  # Fallback gas cost (GCR / GCA / PGA), any region
+CONF_URI_SURCHARGE = "uri_surcharge"  # Other per-CCF charges; named after Mid-Tex's Uri surcharge
 CONF_AUTO_FETCH_GCR = "auto_fetch_gcr"
+CONF_REGION = "region"
+CONF_FIXED_COST_SUMMER = "fixed_cost_summer"  # May-September customer charge, where it differs
+CONF_USE_PUBLISHED_RATES = "use_published_rates"  # Base rates from rates.json; missing means off
 
 # Attributes
 ATTR_USAGE = "usage"

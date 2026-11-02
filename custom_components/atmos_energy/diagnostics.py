@@ -40,9 +40,14 @@ async def async_get_config_entry_diagnostics(
             "commodity_rate": coordinator.wna_calculator.commodity_rate,
         },
         "gcr_info": {
+            "region": coordinator.region,
             "current_rate": coordinator.current_gcr_rate,
             "last_fetch": coordinator.gcr_fetcher._last_fetch.isoformat() if coordinator.gcr_fetcher._last_fetch else None,
             "cache_size": len(coordinator.gcr_fetcher._cache),
+        },
+        "published_rates": {
+            "updated": (coordinator.published_rates.doc or {}).get("updated"),
+            "last_fetch": coordinator.published_rates._last_fetch.isoformat() if coordinator.published_rates._last_fetch else None,
         },
         "model_info": {
             "base_load": coordinator.base_load,

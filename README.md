@@ -11,7 +11,8 @@ A custom component for Home Assistant to retrieve usage data from [Atmos Energy]
 
 ## ✨ Features
 - **Usage Tracking**: Monitor your gas consumption for the current billing period (Daily accounts) or previous cycle (Monthly accounts).
-- **Advanced Cost Prediction (Mid-Tex Only)**: High-accuracy bill forecasting using Weather Normalization Adjustment (WNA) and automated Gas Cost Recovery (GCR) rate fetching.
+- **Daily Cost in Every Atmos Region**: Choose your rate region (Texas, Louisiana, Mississippi, Kansas, Kentucky, Virginia, Colorado or Tennessee) and the daily cost statistics use its tariff rates and its automatically fetched monthly gas cost.
+- **Cost Estimate & Prediction**: Bill estimates and forecasts in every region, plus the Weather Normalization Adjustment (WNA) for Mid-Tex customers.
 - **Smart Predictions**: 7-day gas usage and cost forecasts driven by local weather data and a personalized heating model.
 - **Energy Dashboard Ready**: Fully compatible with the Home Assistant Energy Dashboard for long-term tracking.
 - **Automated Modeling**: Automatically learns your home's heating efficiency by analyzing historical usage and temperature data.
@@ -30,10 +31,10 @@ This integration supports three modes of operation to balance data granularity f
 *   **Data Source**: Daily usage downloads.
 *   **Usage**: Historical daily data and "Days Remaining" in cycle.
 *   **Sensors**: `Gas usage (Current)`, `Days remaining`.
-*   **Energy Dashboard**: Uses the **Statistics API** for accurate historical tracking.
+*   **Energy Dashboard**: Uses the **Statistics API** for accurate historical tracking, including daily cost from your region's rates.
 
-### 3. Daily Data + Advanced Prediction (Mid-Tex Only)
-*   **Data Source**: Daily usage + regional weather + GCR rates.
+### 3. Daily Data + Cost Estimate & Prediction
+*   **Data Source**: Daily usage + local weather + your region's rates (plus WNA in Mid-Tex).
 *   **Usage**: Total high-accuracy bill forecasting.
 *   **Sensors**: All of the above, plus `Estimated cost`, `Predicted usage (7d)`, and `Predicted cost (7d)`.
 *   **Energy Dashboard**: Uses the **Statistics API**.
@@ -57,7 +58,7 @@ This integration supports three modes of operation to balance data granularity f
 
 Atmos Energy data is typically delayed by 24 hours. To ensure your gas usage and calculated costs appear on the **correct day** in Home Assistant, this integration uses the **Statistics API** instead of tracking the sensor state.
 
-As of v0.8.0, the integration generates both **Daily Usage (CCF)** and **Daily Cost (USD)** statistics dynamically. The daily cost perfectly pro-rates your fixed monthly charge and applies all variable WNA, GCR, URI, and tax formulas for that specific day.
+As of v0.8.0, the integration generates both **Daily Usage (CCF)** and **Daily Cost (USD)** statistics dynamically. The daily cost pro-rates your fixed monthly charge and applies the consumption charge, gas cost, other per-CCF charges and tax for that specific day (plus WNA in Mid-Tex prediction mode). Each day uses the gas cost published for its own month, so imported past days aren't priced at today's rate.
 
 ### Setting Up from Scratch (For Best Accuracy)
 To get full historical accuracy extending back months or years before you installed the integration:
@@ -93,7 +94,38 @@ This integration delivers high cost accuracy for Mid-Tex customers by:
 4. **Pro-rated Forecasts (v0.7.1)**: Fixed monthly fees are pro-rated across the 7-day prediction for a more realistic marginal cost forecast.
 5. **Precise Cycle Tracking**: Parses your actual "Next Meter Read Date" from the portal.
 
-**Note**: Due to significant differences in billing formulas and regional tariffs, advanced prediction is currently only available for the **Mid-Tex region**.
+**Note**: The cost estimate and 7-day predictions work in every region. The WNA estimate is Mid-Tex only, because each region calculates it differently and publishes its parameters in different places.
+
+---
+
+## 🗺️ Rate Regions
+
+Atmos Energy sets rates separately in each region. In the daily modes, setup asks for your region:
+
+| Region | Monthly gas cost fetched | Notes |
+| :--- | :--- | :--- |
+| Texas: Mid-Tex | GCR, Residential | WNA estimated in the prediction mode |
+| Texas: West Texas | GCA | The GCA includes the Uri (CRR) charge. Default rates are for Amarillo, Lubbock and unincorporated areas; other cities differ slightly |
+| Louisiana | PGA | |
+| Mississippi | PGA, Combined Year Round | |
+| Kansas | PGA, Firm | |
+| Kentucky | GCA, G-1 | The tariff bills per Mcf; enter rates per CCF (divide by 10) |
+| Virginia | PGA, Firm total | |
+| Colorado: North / Southeast / Southwest | GCA, Firm, per area | Each area has its own gas cost |
+| Tennessee (except Union City) / Union City | PGA, Firm total | Customer charge is lower May to September |
+
+The region fills the rates form with that region's residential tariff values (customer charge and consumption charge), which you should check against your bill. Taxes, franchise fees and riders vary by city, so add those yourself: per-CCF riders go in **Other per-CCF charges**, taxes and fees in the percentage.
+
+Outside Mid-Tex, cost estimates have no weather normalization adjustment. Most regions apply one on winter bills, so winter estimates can differ from the bill by a few cents per CCF.
+
+Entries set up before regions existed are treated as Mid-Tex. Choose a different region in the entry's **Configure** dialog.
+
+### Keeping Rates Up to Date
+Rates change on two schedules, and neither needs a new version of the integration:
+* **Gas cost** changes monthly. It is fetched from Atmos Energy's website.
+* **Customer charge and consumption charge** change about once a year, when a region's tariff changes. The integration checks a published rates file in this repository once a week. With **Keep the customer charge and consumption charge up to date automatically** ticked (the default for new setups), it uses those rates, including the dates they took effect, instead of the values saved in the form. The saved values are still used if the published file can't be reached or doesn't cover your region. The Mid-Tex weather normalization parameters are updated the same way.
+
+Entries set up before this option existed keep using their saved rates until you open **Configure** and save with the box ticked.
 
 ---
 
@@ -133,14 +165,15 @@ Version 0.8.0 introduces a massive improvement to historical accuracy by switchi
 
 1. Go to **Settings > Devices & Services** > **Add Integration** > **Atmos Energy**.
 2. Enter your **Username** and **Password**.
-3. **Enable Advanced Cost Prediction**: Select this if you are a Mid-Tex customer and want high-accuracy billing forecasts.
+3. **Operation Mode**: Choose monthly, daily, or daily with cost estimate & prediction.
 
 ### Configuration Wizard
-If advanced prediction is enabled, you will be guided through:
-*   **Weather Station**: Select the station Atmos uses for your billing area (e.g., Dallas, Austin).
-*   **Rates**: Enter your consumption rate and fixed fees (defaults provided).
-*   **GCR Auto-fetch**: Enable this to automatically track monthly gas price fluctuations.
-*   **Weather Entity**: Select a local weather source (e.g., `weather.home`) for 7-day forecasting.
+In the daily modes, you will be guided through:
+*   **Rate Region**: Select the Atmos region on your bill (see [Rate Regions](#️-rate-regions)).
+*   **Weather Station** (prediction mode, Mid-Tex only): Select the station Atmos uses for your billing area (e.g., Dallas, Austin).
+*   **Rates**: Check your customer charge, consumption charge, other charges and tax (defaults come from your region's tariff).
+*   **Gas Cost Auto-fetch**: Enable this to automatically track the monthly gas cost (GCR, GCA or PGA).
+*   **Weather Entity** (prediction mode): Select a local weather source (e.g., `weather.home`) for 7-day forecasting.
 
 ### Multiple Accounts (Service Addresses)
 If your login has more than one Atmos Energy account, setup asks which service address to track. Each config entry tracks one account, with its own sensors, rates, history and Energy Dashboard statistics. To track another address, add the integration again with the same login; addresses already set up are not offered again.
@@ -152,8 +185,8 @@ With more than one entry, `atmos_energy.populate_past_usage` needs the `config_e
 ## 🔍 Troubleshooting
 - **Frequency**: Data is fetched daily at 8 AM (aligned with Atmos's data refresh) to minimize portal load.
 - **Login Issues**: Ensure you can log in to [Atmos Energy](https://www.atmosenergy.com/) directly and have accepted any new Terms of Service.
-- **GCR Fetching**: If the integration cannot fetch the latest rate PDF, it will fall back to your manually entered GCR rate and log a warning.
+- **Gas Cost Fetching**: If the integration cannot fetch the latest rate PDF, it uses the most recent month it has, or else your manually entered gas cost, and logs a warning. It checks again once a day until the new month is published.
 - **New Operation Modes (v0.7.2)**:
     - **Monthly**: Lightweight monthly billing data ONLY.
     - **Daily (Basic)**: Daily data and stats API, but skips heavy modeling and cost prediction.
-    - **Daily (Advanced)**: Full predictive modeling and WNA/GCR calculations for Mid-Tex customers.
+    - **Daily (Cost Estimate & Prediction)**: Full predictive modeling and cost estimates, with WNA for Mid-Tex customers.

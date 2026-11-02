@@ -21,6 +21,9 @@ from .const import (
     CONF_AUTO_FETCH_GCR,
     CONF_ACCOUNT_NUMBER,
     CONF_SERVICE_ADDRESS,
+    CONF_REGION,
+    CONF_FIXED_COST_SUMMER,
+    CONF_USE_PUBLISHED_RATES,
     MODE_MONTHLY,
     MODE_DAILY,
     MODE_DAILY_ADVANCED
@@ -28,6 +31,7 @@ from .const import (
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError
 from .wna.ndd_data import WEATHER_STATION_CONFIG
+from .regions import DEFAULT_REGION, REGIONS, WNA_REGION, get_region
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +59,47 @@ def _configured_account_numbers(hass, exclude_entry_id: str | None = None) -> se
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.data.get(CONF_ACCOUNT_NUMBER) and entry.entry_id != exclude_entry_id
     }
+
+
+def _region_schema(default: str) -> vol.Schema:
+    return vol.Schema({
+        vol.Required(CONF_REGION, default=default): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=list(REGIONS),
+                translation_key="region",
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
+    })
+
+
+def _cost_schema(region_key: str, values: dict[str, Any]) -> vol.Schema:
+    """Rates form: defaults come from `values`, then from the region's tariff."""
+    region = get_region(region_key)
+    money = vol.All(vol.Coerce(float), vol.Range(min=0))
+
+    def default(key, region_value):
+        return values.get(key, region_value)
+
+    fields = {
+        # On by default, also for older entries opening the form: their saved charges become the fallback
+        vol.Required(CONF_USE_PUBLISHED_RATES, default=values.get(CONF_USE_PUBLISHED_RATES, True)): bool,
+        vol.Required(CONF_FIXED_COST, default=default(CONF_FIXED_COST, region.fixed_cost)): money,
+    }
+    if region.fixed_cost_summer is not None:
+        fields[vol.Required(
+            CONF_FIXED_COST_SUMMER, default=default(CONF_FIXED_COST_SUMMER, region.fixed_cost_summer)
+        )] = money
+    fields.update({
+        vol.Required(CONF_USAGE_RATE, default=default(CONF_USAGE_RATE, region.usage_rate)): money,
+        vol.Required(CONF_AUTO_FETCH_GCR, default=values.get(CONF_AUTO_FETCH_GCR, True)): bool,
+        vol.Required(CONF_GCR_RATE, default=default(CONF_GCR_RATE, region.gas_cost_rate)): money,
+        vol.Required(CONF_URI_SURCHARGE, default=default(CONF_URI_SURCHARGE, region.other_charges)): money,
+        vol.Required(CONF_TAX_PERCENT, default=default(CONF_TAX_PERCENT, region.tax_percent)): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=100)
+        ),
+    })
+    return vol.Schema(fields)
 
 
 class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -141,16 +186,16 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_step_after_account(self):
-        """Branch based on mode."""
+        """Branch based on mode: daily modes go on to the rate region and rates."""
         mode = self._user_data.get(CONF_OPERATION_MODE, MODE_DAILY_ADVANCED)
-        if mode == MODE_DAILY_ADVANCED:
-            return await self.async_step_weather_station()
+        if mode == MODE_MONTHLY:
+            return self.async_create_entry(
+                title=self._entry_title(),
+                data=self._user_data,
+                options={}
+            )
 
-        return self.async_create_entry(
-            title=self._entry_title(),
-            data=self._user_data,
-            options={}
-        )
+        return await self.async_step_region()
 
     def _entry_title(self) -> str:
         """Username, plus the street address for multi-account logins."""
@@ -159,8 +204,19 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return f"{self._user_data[CONF_USERNAME]} ({address.split(',')[0]})"
         return self._user_data[CONF_USERNAME]
 
+    async def async_step_region(self, user_input=None):
+        """Step 2: Atmos rate region, which sets the gas-cost source and default rates."""
+        if user_input is not None:
+            self._options.update(user_input)
+            # The WNA weather station applies to Mid-Tex only; other regions skip it
+            if self._user_data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED and self._options[CONF_REGION] == WNA_REGION:
+                return await self.async_step_weather_station()
+            return await self.async_step_cost()
+
+        return self.async_show_form(step_id="region", data_schema=_region_schema(DEFAULT_REGION))
+
     async def async_step_weather_station(self, user_input=None):
-        """Step 2: Select weather station."""
+        """Step 2b (Mid-Tex advanced mode): Select weather station."""
         if user_input is not None:
             self._options.update(user_input)
             return await self.async_step_cost()
@@ -177,20 +233,17 @@ class AtmosEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 3: Handle choosing cost parameters."""
         if user_input is not None:
             self._options.update(user_input)
-            return await self.async_step_weather_forecast()
+            if self._user_data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
+                return await self.async_step_weather_forecast()
+            return self.async_create_entry(
+                title=self._entry_title(),
+                data=self._user_data,
+                options=self._options
+            )
 
         return self.async_show_form(
             step_id="cost",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_FIXED_COST, default=24.40): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                    vol.Required(CONF_USAGE_RATE, default=1.03839): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                    vol.Required(CONF_AUTO_FETCH_GCR, default=True): bool,
-                    vol.Required(CONF_GCR_RATE, default=1.16939): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                    vol.Required(CONF_URI_SURCHARGE, default=0.01843): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                    vol.Required(CONF_TAX_PERCENT, default=8.08): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
-                }
-            ),
+            data_schema=_cost_schema(self._options[CONF_REGION], {}),
         )
 
     async def async_step_weather_forecast(self, user_input=None):
@@ -342,14 +395,31 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def _async_step_after_account(self):
-        """Branch based on mode."""
-        if self._data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
-            return await self.async_step_weather_station()
+        """Branch based on mode: daily modes go on to the rate region and rates."""
+        if self._data[CONF_OPERATION_MODE] == MODE_MONTHLY:
+            return self.async_create_entry(title="", data={})
 
-        return self.async_create_entry(title="", data={})
+        return await self.async_step_region()
+
+    async def async_step_region(self, user_input=None):
+        """Step 2: Atmos rate region."""
+        current = self._options.get(CONF_REGION, DEFAULT_REGION)
+        if user_input is not None:
+            if user_input[CONF_REGION] != current:
+                # New region: offer its tariff defaults instead of the old region's rates
+                for key in (CONF_FIXED_COST, CONF_FIXED_COST_SUMMER, CONF_USAGE_RATE,
+                            CONF_GCR_RATE, CONF_URI_SURCHARGE, CONF_TAX_PERCENT):
+                    self._options.pop(key, None)
+            self._options.update(user_input)
+            # The WNA weather station applies to Mid-Tex only; other regions skip it
+            if self._data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED and self._options[CONF_REGION] == WNA_REGION:
+                return await self.async_step_weather_station()
+            return await self.async_step_cost()
+
+        return self.async_show_form(step_id="region", data_schema=_region_schema(current))
 
     async def async_step_weather_station(self, user_input=None):
-        """Step 2: Region."""
+        """Step 2b (Mid-Tex advanced mode): Weather station."""
         if user_input is not None:
             self._options.update(user_input)
             return await self.async_step_cost()
@@ -369,18 +439,13 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
         """Step 3: Rates."""
         if user_input is not None:
             self._options.update(user_input)
-            return await self.async_step_weather_forecast()
+            if self._data[CONF_OPERATION_MODE] == MODE_DAILY_ADVANCED:
+                return await self.async_step_weather_forecast()
+            return self.async_create_entry(title="", data=self._options)
 
         return self.async_show_form(
             step_id="cost",
-            data_schema=vol.Schema({
-                vol.Required(CONF_FIXED_COST, default=self._options.get(CONF_FIXED_COST, 24.40)): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Required(CONF_USAGE_RATE, default=self._options.get(CONF_USAGE_RATE, 1.03839)): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Required(CONF_AUTO_FETCH_GCR, default=self._options.get(CONF_AUTO_FETCH_GCR, True)): bool,
-                vol.Required(CONF_GCR_RATE, default=self._options.get(CONF_GCR_RATE, 1.16939)): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Required(CONF_URI_SURCHARGE, default=self._options.get(CONF_URI_SURCHARGE, 0.01843)): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Required(CONF_TAX_PERCENT, default=self._options.get(CONF_TAX_PERCENT, 8.08)): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
-            }),
+            data_schema=_cost_schema(self._options.get(CONF_REGION, DEFAULT_REGION), self._options),
         )
 
     async def async_step_weather_forecast(self, user_input=None):

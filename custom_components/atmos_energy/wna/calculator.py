@@ -24,11 +24,25 @@ class WNACalculator:
         self.heat_factor = config.get("heat_factor_residential", 0.1394)
         self.commodity_rate = config.get("commodity_rate", 103.839)
         
+        self._ndd: dict[int, int] | None = None  # Published normals; None uses ndd_data
+
         _LOGGER.debug(
             "WNA Calculator initialized for %s: BL=%.2f, HSF=%.4f, R=%.3f",
             station_id, self.base_load, self.heat_factor, self.commodity_rate
         )
-    
+
+    def apply_published(self, params: dict) -> None:
+        """Use parameters from the published rates file (rates_data.wna_params) over the built-in ones."""
+        self.base_load = params["base_load"]
+        self.heat_factor = params["heat_factor"]
+        self.commodity_rate = params["commodity_rate"]
+        self._ndd = params["ndd"]
+
+    def _get_ndd(self, month: int) -> int:
+        if self._ndd is not None:
+            return self._ndd.get(month, 0)
+        return get_ndd(self.station_id, month)
+
     def calculate_wnaf(self, month: int, projected_add: int) -> float:
         """Calculate WNA factor (WNAF) for a given month and projected ADD.
         
@@ -50,7 +64,7 @@ class WNACalculator:
             WNAF in cents per CCF (can be negative for credits)
         """
         # Get NDD for this month and station
-        ndd = get_ndd(self.station_id, month)
+        ndd = self._get_ndd(month)
         
         if ndd == 0:
             # Outside WNA season (May-Oct)
@@ -104,4 +118,4 @@ class WNACalculator:
     
     def get_ndd_for_month(self, month: int) -> int:
         """Get NDD value for this station and month."""
-        return get_ndd(self.station_id, month)
+        return self._get_ndd(month)

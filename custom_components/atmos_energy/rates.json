@@ -1,0 +1,189 @@
+{
+  "schema": 1,
+  "updated": "2026-11-02",
+  "regions": {
+    "mid_tex": {
+      "rates": [
+        {
+          "effective": "2025-10-01",
+          "fixed_cost": 25.03,
+          "usage_rate": 0.78025
+        },
+        {
+          "effective": "2026-10-01",
+          "fixed_cost": 24.4,
+          "usage_rate": 1.03839
+        }
+      ]
+    },
+    "west_texas": {
+      "rates": [
+        {
+          "effective": "2026-06-05",
+          "fixed_cost": 16.75,
+          "usage_rate": 0.7222
+        }
+      ]
+    },
+    "louisiana": {
+      "rates": [
+        {
+          "effective": "2026-07-01",
+          "fixed_cost": 31.25,
+          "usage_rate": 0.72769
+        }
+      ]
+    },
+    "mississippi": {
+      "rates": [
+        {
+          "effective": "2026-08-07",
+          "fixed_cost": 30.5,
+          "usage_rate": 0.70181
+        }
+      ]
+    },
+    "kansas": {
+      "rates": [
+        {
+          "effective": "2026-03-01",
+          "fixed_cost": 23.0,
+          "usage_rate": 0.2429
+        }
+      ]
+    },
+    "kentucky": {
+      "rates": [
+        {
+          "effective": "2025-08-11",
+          "fixed_cost": 25.0,
+          "usage_rate": 0.16261
+        }
+      ]
+    },
+    "virginia": {
+      "rates": [
+        {
+          "effective": "2024-06-01",
+          "fixed_cost": 13.24,
+          "usage_rate": 0.2404
+        }
+      ]
+    },
+    "colorado_north": {
+      "rates": [
+        {
+          "effective": "2026-08-17",
+          "fixed_cost": 11.6,
+          "usage_rate": 0.4303
+        }
+      ]
+    },
+    "colorado_southeast": {
+      "rates": [
+        {
+          "effective": "2026-08-17",
+          "fixed_cost": 11.6,
+          "usage_rate": 0.4303
+        }
+      ]
+    },
+    "colorado_southwest": {
+      "rates": [
+        {
+          "effective": "2026-08-17",
+          "fixed_cost": 11.6,
+          "usage_rate": 0.4303
+        }
+      ]
+    },
+    "tennessee": {
+      "rates": [
+        {
+          "effective": "2026-10-01",
+          "fixed_cost": 27.2,
+          "usage_rate": 0.197,
+          "fixed_cost_summer": 25.2
+        }
+      ]
+    },
+    "tennessee_union_city": {
+      "rates": [
+        {
+          "effective": "2026-10-01",
+          "fixed_cost": 27.2,
+          "usage_rate": 0.197,
+          "fixed_cost_summer": 25.2
+        }
+      ]
+    }
+  },
+  "wna": {
+    "mid_tex": {
+      "source": "Mid-Tex tariff (October 1, 2026) and WNA report data (June 2026)",
+      "commodity_rate": 103.839,
+      "stations": {
+        "austin": {
+          "base_load": 8.19,
+          "heat_factor": 0.1394,
+          "ndd": {
+            "1": 498,
+            "2": 318,
+            "3": 181,
+            "4": 44,
+            "11": 208,
+            "12": 429
+          }
+        },
+        "dallas": {
+          "base_load": 12.74,
+          "heat_factor": 0.2017,
+          "ndd": {
+            "1": 706,
+            "2": 489,
+            "3": 292,
+            "4": 85,
+            "11": 314,
+            "12": 601
+          }
+        },
+        "waco": {
+          "base_load": 9.23,
+          "heat_factor": 0.1277,
+          "ndd": {
+            "1": 536,
+            "2": 359,
+            "3": 196,
+            "4": 49,
+            "11": 223,
+            "12": 452
+          }
+        },
+        "abilene": {
+          "base_load": 9.61,
+          "heat_factor": 0.1476,
+          "ndd": {
+            "1": 616,
+            "2": 443,
+            "3": 247,
+            "4": 80,
+            "11": 292,
+            "12": 585
+          }
+        },
+        "wichita_falls": {
+          "base_load": 10.43,
+          "heat_factor": 0.1387,
+          "ndd": {
+            "1": 697,
+            "2": 520,
+            "3": 299,
+            "4": 107,
+            "11": 362,
+            "12": 678
+          }
+        }
+      }
+    }
+  }
+}

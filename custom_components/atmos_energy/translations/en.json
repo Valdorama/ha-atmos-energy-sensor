@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Atmos Energy Account",
-                "description": "Enter your Atmos Energy credentials. The advanced cost prediction feature is currently only available for customers in the Mid-Tex region.",
+                "description": "Enter your Atmos Energy credentials. The prediction mode adds an estimated bill and 7-day usage and cost forecasts; in the Mid-Tex region it also estimates the weather normalization adjustment (WNA).",
                 "data": {
                     "username": "Username",
                     "password": "Password",
@@ -17,8 +17,15 @@
                     "account_number": "Account"
                 }
             },
+            "region": {
+                "title": "Rate Region",
+                "description": "Choose the Atmos Energy rate region on your bill. It decides where the monthly gas cost is fetched from and fills in typical rates on the next page. The weather normalization adjustment (WNA) is estimated for Mid-Tex only.",
+                "data": {
+                    "region": "Rate region"
+                }
+            },
             "weather_station": {
-                "title": "Region Selection",
+                "title": "Weather Station",
                 "description": "Select the weather station Atmos Energy uses for your area to ensure accurate weather normalization calculations.",
                 "data": {
                     "weather_station": "Weather Station"
@@ -26,14 +33,16 @@
             },
             "cost": {
                 "title": "Rates & Surcharges",
-                "description": "Configure your billing rates. These can usually be found on your latest Atmos Energy bill.",
+                "description": "With the first box ticked, the customer charge and consumption charge come from the published Atmos tariff rates for your region, checked weekly; the values below are used only when it is off or no published rate is available.\n\nDefaults are this region's residential tariff rates; check them against your latest Atmos Energy bill. Kentucky bills per Mcf: divide by 10 for $/CCF. Put any per-CCF riders (e.g. Mid-Tex's Winter Storm Uri surcharge) in other charges, and local taxes and franchise fees in the percentage.",
                 "data": {
-                    "fixed_cost": "Customer Charge ($)",
-                    "usage_rate": "Consump Chrg Rate ($/CCF)",
-                    "auto_fetch_gcr": "Auto-fetch current GCR rates",
-                    "gcr_rate": "Rider GCR Rate ($/CCF) (fallback)",
-                    "uri_surcharge": "Winter Storm Uri Surcharge ($/CCF)",
-                    "tax_percent": "Taxes & Fees Percentage (%)"
+                    "use_published_rates": "Keep the customer charge and consumption charge up to date automatically",
+                    "fixed_cost": "Customer charge ($/month)",
+                    "fixed_cost_summer": "Customer charge, May to September ($/month)",
+                    "usage_rate": "Consumption / distribution charge ($/CCF)",
+                    "auto_fetch_gcr": "Auto-fetch the monthly gas cost (GCR, GCA or PGA)",
+                    "gcr_rate": "Gas cost ($/CCF), used when auto-fetch is off or fails",
+                    "uri_surcharge": "Other per-CCF charges and riders ($/CCF)",
+                    "tax_percent": "Taxes & fees (%)"
                 }
             },
             "weather_forecast": {
@@ -65,7 +74,7 @@
         "step": {
             "init": {
                 "title": "Atmos Energy Options",
-                "description": "Update your credentials or toggle the prediction feature.",
+                "description": "Update your credentials or change the operation mode.",
                 "data": {
                     "username": "Username",
                     "password": "Password",
@@ -79,8 +88,15 @@
                     "account_number": "Account"
                 }
             },
+            "region": {
+                "title": "Rate Region",
+                "description": "Choose the Atmos Energy rate region on your bill. It decides where the monthly gas cost is fetched from and fills in typical rates on the next page. The weather normalization adjustment (WNA) is estimated for Mid-Tex only.",
+                "data": {
+                    "region": "Rate region"
+                }
+            },
             "weather_station": {
-                "title": "Region Selection",
+                "title": "Weather Station",
                 "description": "Update the weather station for your area.",
                 "data": {
                     "weather_station": "Weather Station"
@@ -88,14 +104,16 @@
             },
             "cost": {
                 "title": "Rates & Surcharges",
-                "description": "Update your billing rates and surcharges.",
+                "description": "With the first box ticked, the customer charge and consumption charge come from the published Atmos tariff rates for your region, checked weekly; the values below are used only when it is off or no published rate is available.\n\nDefaults are this region's residential tariff rates; check them against your latest Atmos Energy bill. Kentucky bills per Mcf: divide by 10 for $/CCF. Put any per-CCF riders (e.g. Mid-Tex's Winter Storm Uri surcharge) in other charges, and local taxes and franchise fees in the percentage.",
                 "data": {
-                    "fixed_cost": "Customer Charge ($)",
-                    "usage_rate": "Consump Chrg Rate ($/CCF)",
-                    "auto_fetch_gcr": "Auto-fetch current GCR rates",
-                    "gcr_rate": "Rider GCR Rate ($/CCF) (fallback)",
-                    "uri_surcharge": "Winter Storm Uri Surcharge ($/CCF)",
-                    "tax_percent": "Taxes & Fees Percentage (%)"
+                    "use_published_rates": "Keep the customer charge and consumption charge up to date automatically",
+                    "fixed_cost": "Customer charge ($/month)",
+                    "fixed_cost_summer": "Customer charge, May to September ($/month)",
+                    "usage_rate": "Consumption / distribution charge ($/CCF)",
+                    "auto_fetch_gcr": "Auto-fetch the monthly gas cost (GCR, GCA or PGA)",
+                    "gcr_rate": "Gas cost ($/CCF), used when auto-fetch is off or fails",
+                    "uri_surcharge": "Other per-CCF charges and riders ($/CCF)",
+                    "tax_percent": "Taxes & fees (%)"
                 }
             },
             "weather_forecast": {
@@ -126,7 +144,23 @@
             "options": {
                 "monthly": "Monthly Data (Basic)",
                 "daily": "Daily Data (Basic)",
-                "daily_advanced": "Daily Data + Advanced Prediction (Mid-Tex Only)"
+                "daily_advanced": "Daily Data + Cost Estimate & Prediction"
+            }
+        },
+        "region": {
+            "options": {
+                "mid_tex": "Texas: Mid-Tex",
+                "west_texas": "Texas: West Texas",
+                "louisiana": "Louisiana",
+                "mississippi": "Mississippi",
+                "kansas": "Kansas",
+                "kentucky": "Kentucky",
+                "virginia": "Virginia",
+                "colorado_north": "Colorado: North",
+                "colorado_southeast": "Colorado: Southeast",
+                "colorado_southwest": "Colorado: Southwest",
+                "tennessee": "Tennessee (except Union City)",
+                "tennessee_union_city": "Tennessee: Union City"
             }
         }
     },

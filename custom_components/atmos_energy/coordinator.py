@@ -33,6 +33,9 @@ from .const import (
     CONF_WEATHER_ENTITY,
     CONF_AUTO_FETCH_GCR,
     CONF_GCR_RATE,
+    CONF_REGION,
+    CONF_FIXED_COST_SUMMER,
+    CONF_USE_PUBLISHED_RATES,
     STORAGE_KEY,
     STORAGE_VERSION,
     CONF_ACCOUNT_NUMBER,
@@ -51,7 +54,10 @@ from .const import (
 from .api import AtmosEnergyApiClient
 from .exceptions import AuthenticationError, APIError, DataParseError, AccountSelectionError
 from .wna.calculator import WNACalculator
-from .wna.gcr_fetcher import GCRRateFetcher
+from .gas_cost import GasCostFetcher
+from .published_rates import PublishedRates
+from .rates_data import base_rates, wna_params
+from .regions import DEFAULT_REGION, SUMMER_MONTHS, WNA_REGION, get_region
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,10 +78,14 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         # Initialize WNA calculator
         self.wna_calculator = WNACalculator(station_id)
         
-        # Initialize GCR fetcher
-        self.gcr_fetcher = GCRRateFetcher(hass)
+        # Monthly gas cost (GCR / GCA / PGA) for the entry's rate region
+        self.region = entry.options.get(CONF_REGION, DEFAULT_REGION)
+        self.gcr_fetcher = GasCostFetcher(hass, self.region, get_region(self.region).gas_cost)
         self.current_gcr_rate = None
-        
+        self._wna_info: dict[str, Any] = {}  # Latest WNA result, before self.data is replaced
+        # Yearly tariff values (rates.json), checked weekly
+        self.published_rates = PublishedRates(hass)
+
         # Persistent storage for history, one file per entry (each entry is one meter)
         self._store = Store(hass, STORAGE_VERSION, history_storage_key(entry.entry_id))
         self._history = {} # Keyed by date string YYYY-MM-DD
@@ -128,6 +138,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Load GCR cache
             await self.gcr_fetcher.async_load()
+            await self.published_rates.async_load()
+            self._apply_published_wna()
 
             stored = await self._store.async_load()
             if stored:
@@ -404,7 +416,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
             try:
                 usage_val = float(usage)
-                daily_cost = self._calculate_daily_cost_for_date(usage_val)
+                daily_cost = self._calculate_daily_cost_for_date(usage_val, dt)
                 cost_cumulative_sum += daily_cost
                 timestamp_utc = dt_util.as_utc(dt)
                 cost_statistics.append(StatisticData(
@@ -824,7 +836,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Could not parse next meter read date: %s", date_str)
         return None
 
-    def _calculate_daily_cost_for_date(self, usage: float) -> float:
+    def _calculate_daily_cost_for_date(self, usage: float, day: datetime | None = None) -> float:
         """Calculate the accurate cost for a single day's usage.
 
         Reuses calculate_total_cost with pro_rate_days=1 to correctly
@@ -833,6 +845,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
 
         Args:
             usage: Daily gas usage in CCF.
+            day: The day being priced, so it gets that month's gas cost
+                and customer charge. None prices it at today's rates.
 
         Returns:
             Cost in USD for that day's usage.
@@ -841,38 +855,98 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             usage=usage,
             include_fixed=True,
             pro_rate_days=1,
+            when=day,
         )
         return result["total"]
 
+    def _gas_cost_rate(self, when: datetime | None) -> float:
+        """Gas cost $/CCF: the fetched rate for `when`'s month, else the current one, else the option."""
+        if when is not None and self.config_entry.options.get(CONF_AUTO_FETCH_GCR, True):
+            rate = self.gcr_fetcher.rate_for(when.year, when.month)
+            if rate is not None:
+                return rate
+        return float(self.current_gcr_rate or self.config_entry.options.get(CONF_GCR_RATE, 1.17))
+
+    def _wna_rate(self, when: datetime | None) -> float:
+        """WNA $/CCF for a day (Mid-Tex advanced mode only; 0 elsewhere).
+
+        The factor is projected for the current billing period, so it only applies to
+        days in that period. Earlier periods' factors aren't known, so their days get none.
+        """
+        wna_info = self._wna_info or (self.data.get("wna_calculated", {}) if self.data else {})
+        rate = float(wna_info.get("wnaf_rate_raw", 0.0))
+        if when is not None and rate:
+            period_start = self._parse_date(wna_info.get("billing_period_start") or "")
+            if period_start is None or when.date() < period_start.date():
+                return 0.0
+        return rate
+
+    def _base_rates(self, day: datetime) -> dict[str, Any]:
+        """Customer charges and consumption rate in effect on `day`.
+
+        From the published rates file when the entry uses it (and it covers the region),
+        otherwise the entry's own options.
+        """
+        options = self.config_entry.options
+        if options.get(CONF_USE_PUBLISHED_RATES, False):
+            published = base_rates(self.published_rates.doc, self.region, day.date())
+            if published:
+                return {
+                    "fixed_cost": published["fixed_cost"],
+                    "fixed_cost_summer": published.get("fixed_cost_summer"),
+                    "usage_rate": published["usage_rate"],
+                }
+        return {
+            "fixed_cost": options.get("fixed_cost", 24.40),
+            "fixed_cost_summer": options.get(CONF_FIXED_COST_SUMMER),
+            "usage_rate": options.get("usage_rate", 0.78),
+        }
+
+    def _apply_published_wna(self):
+        """Use the published Mid-Tex WNA parameters for this entry's weather station, if any."""
+        if self.region != WNA_REGION:
+            return
+        params = wna_params(self.published_rates.doc, WNA_REGION, self.wna_calculator.station_id)
+        if params:
+            self.wna_calculator.apply_published(params)
+
     def calculate_total_cost(
-        self, 
-        usage: float, 
-        include_fixed: bool = True, 
+        self,
+        usage: float,
+        include_fixed: bool = True,
         wna_charge: float | None = None,
-        pro_rate_days: int | None = None
+        pro_rate_days: int | None = None,
+        when: datetime | None = None,
     ) -> dict[str, Any]:
         """Calculate total cost with all components.
-        
+
         Args:
             usage: Usage in CCF
             include_fixed: Include fixed charge
             wna_charge: Pre-calculated WNA charge (if None, will calculate)
             pro_rate_days: If set, pro-rate fixed charge for this many days
-        
+            when: Date being priced, for its month's gas cost and seasonal
+                customer charge (None: today)
+
         Returns:
             Dict with 'total' and 'breakdown' keys
         """
         options = self.config_entry.options
-        
-        # Fixed charge
-        fixed = float(options.get("fixed_cost", 24.40)) if include_fixed else 0.0
-        
+        day = when or dt_util.now()
+        base = self._base_rates(day)
+
+        # Fixed charge, with a separate May-September value in regions that have one
+        fixed = base["fixed_cost"]
+        if day.month in SUMMER_MONTHS and base["fixed_cost_summer"] is not None:
+            fixed = base["fixed_cost_summer"]
+        fixed = float(fixed) if include_fixed else 0.0
+
         # Pro-rate fixed charge if requested
         if pro_rate_days is not None and include_fixed:
             fixed = fixed * (pro_rate_days / 30.0)
-        
+
         # Consumption charge
-        consumption_rate = float(options.get("usage_rate", 0.78))
+        consumption_rate = float(base["usage_rate"])
         consumption_charge = usage * consumption_rate
         
         # WNA charge
@@ -882,15 +956,13 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         if wna_charge is not None:
             pass # Use the explicit charge provided
         else:
-            wna_info = self.data.get("wna_calculated", {}) if self.data else {}
-            wna_factor = float(wna_info.get("wna_factor", 0.0))
-            wna_charge = usage * wna_factor
+            wna_charge = usage * self._wna_rate(when)
         
-        # GCR charge
-        gcr_rate = float(self.current_gcr_rate or options.get("gcr_rate", 1.17))
+        # Gas cost charge (GCR / GCA / PGA)
+        gcr_rate = self._gas_cost_rate(when)
         gcr_charge = usage * gcr_rate
-        
-        # URI surcharge
+
+        # Other per-CCF charges (Mid-Tex: Winter Storm Uri surcharge)
         uri_rate = float(options.get("uri_surcharge", 0.018431))
         uri_charge = usage * uri_rate
         
@@ -941,11 +1013,15 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             # 1. Daily usage specific tasks
             if daily_usage:
                 await self._update_gcr_rate()
-                await self._async_import_daily_statistics(data)
-                
-                # 2. Advanced Prediction Logic (Only MODE_DAILY_ADVANCED)
+                if await self.published_rates.async_refresh():
+                    self._apply_published_wna()
+
+                # 2. Advanced Prediction Logic (Only MODE_DAILY_ADVANCED).
+                # Before the statistics import, so daily costs get this update's WNA factor.
                 if mode == MODE_DAILY_ADVANCED:
                     await self._update_advanced_metrics(data)
+
+                await self._async_import_daily_statistics(data)
 
                 # 3. Synchronize History
                 await self._sync_history(data)
@@ -1000,41 +1076,43 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Could not fetch GCR rate: %s", e)
 
     async def _update_advanced_metrics(self, data: dict):
-        """Calculate WNA, projections, and predictions."""
+        """Calculate WNA (Mid-Tex only), projections, and predictions."""
         # 1. Recalculate physical model
         self._recalculate_model()
-        
-        # 2. Projected ADD for WNA
-        data["projected_add"] = await self._calculate_projected_add(data)
-        
-        # 3. Pre-calculate WNA Charge
+
         usage = data.get(ATTR_USAGE, 0)
         billing_start = data.get(ATTR_BILLING_PERIOD_START)
         billing_month = datetime.now().month
-        if billing_start:
-            try:
-                # String part index 1 is month in YYYY-MM-DD
-                billing_month = int(billing_start.split("-")[1])
-            except:
-                pass
-        
-        projected_add = data.get("projected_add", self.wna_calculator.get_ndd_for_month(billing_month))
-        
-        # Perform calculation
-        wnaf_cents = self.wna_calculator.calculate_wnaf(billing_month, projected_add)
-        wna_charge = self.wna_calculator.calculate_wna_charge(
-            billing_month, projected_add, usage, wnaf_cents=wnaf_cents
-        )
-        
+        # The portal gives "YYYY-MM-DD ..." or "MM/DD/YYYY"
+        billing_start_dt = self._parse_date(str(billing_start).split(" ")[0]) if billing_start else None
+        if billing_start_dt:
+            billing_month = billing_start_dt.month
+
+        # 2. WNA charge. Its parameters are modelled for Mid-Tex only; other regions get none.
+        if self.region == WNA_REGION:
+            data["projected_add"] = await self._calculate_projected_add(data)
+            projected_add = data.get("projected_add", self.wna_calculator.get_ndd_for_month(billing_month))
+            wnaf_cents = self.wna_calculator.calculate_wnaf(billing_month, projected_add)
+            wna_charge = self.wna_calculator.calculate_wna_charge(
+                billing_month, projected_add, usage, wnaf_cents=wnaf_cents
+            )
+            ndd = self.wna_calculator.get_ndd_for_month(billing_month)
+            station = self.wna_calculator.station_id
+        else:
+            projected_add, wnaf_cents, wna_charge, ndd, station = None, 0.0, 0.0, 0, None
+
         data["wna_calculated"] = {
             "wnaf_rate": f"${wnaf_cents/100:.6f}/CCF",
             "wnaf_rate_raw": wnaf_cents / 100.0,
             "wna_charge": wna_charge,
-            "ndd": self.wna_calculator.get_ndd_for_month(billing_month),
+            "ndd": ndd,
             "add_projected": projected_add,
             "billing_month": billing_month,
-            "weather_station": self.wna_calculator.station_id,
+            # The period wnaf_rate_raw applies to (daily cost statistics)
+            "billing_period_start": billing_start_dt.strftime("%Y-%m-%d") if billing_start_dt else None,
+            "weather_station": station,
         }
+        self._wna_info = data["wna_calculated"]
         
         # 4. Predictions
         predicted_usage_7d = await self._calculate_predicted_usage_7d()

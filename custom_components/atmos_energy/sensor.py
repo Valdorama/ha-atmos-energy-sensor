@@ -223,6 +223,7 @@ class AtmosEnergyCostSensor(AtmosEnergyBaseSensor):
         
         return {
             "account_id": self._account_id,
+            "region": self.coordinator.region,
             "formula": (
                 f"({breakdown['fixed_charge']} fixed + "
                 f"{breakdown['consumption_charge']} consumption + "
