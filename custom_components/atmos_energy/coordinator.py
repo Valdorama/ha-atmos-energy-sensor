@@ -1149,7 +1149,10 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             wanted = periods if full_backfill else periods[:1]
             # Oldest first, so a day in two periods keeps the newer period's value
             past = await self.client.get_daily_history(list(reversed(wanted)))
-        except (APIError, DataParseError, aiohttp.ClientError, asyncio.TimeoutError) as err:
+        # AuthenticationError is included on purpose: the current period was already
+        # fetched this update, so a login-looking page from the extra pages (an
+        # unfamiliar layout in another region, say) must not fail it or start reauth.
+        except (APIError, AuthenticationError, DataParseError, aiohttp.ClientError, asyncio.TimeoutError) as err:
             _LOGGER.warning("Could not fetch past billing periods, importing the current one only: %s", err)
             return current
 

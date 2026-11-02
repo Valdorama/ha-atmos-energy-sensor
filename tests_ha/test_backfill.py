@@ -8,7 +8,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.atmos_energy.api import AtmosEnergyApiClient
 from custom_components.atmos_energy.const import DOMAIN
 from custom_components.atmos_energy.coordinator import AtmosEnergyDataUpdateCoordinator
-from custom_components.atmos_energy.exceptions import APIError, DataParseError
+from custom_components.atmos_energy.exceptions import APIError, AuthenticationError, DataParseError
 
 # The Daily Usage page's period picker, trimmed. Values are "<bill month>,<year>".
 DAILY_USAGE_PAGE = b"""
@@ -146,6 +146,14 @@ async def test_repeated_day_keeps_newest_period(coordinator):
 
 async def test_portal_error_keeps_current_and_retries_backfill(coordinator):
     coordinator.client.get_billing_periods.side_effect = APIError("temporarily unavailable")
+    history = await coordinator._async_add_past_periods(CURRENT)
+
+    assert history == CURRENT
+    assert not coordinator._backfill_done
+
+
+async def test_login_looking_page_keeps_current_and_does_not_fail(coordinator):
+    coordinator.client.get_billing_periods.side_effect = AuthenticationError("Portal returned a login page")
     history = await coordinator._async_add_past_periods(CURRENT)
 
     assert history == CURRENT
