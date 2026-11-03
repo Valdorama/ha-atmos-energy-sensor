@@ -66,6 +66,16 @@ _LOGGER = logging.getLogger(__name__)
 _METER_READ_MIN = 100.0
 _METER_READ_FACTOR = 20.0
 
+def _bill_month(billing_month: str | None) -> datetime | None:
+    """The first of a daily record's billing month, e.g. "Oct 26" -> 2026-10-01."""
+    if not billing_month:
+        return None
+    try:
+        return datetime.strptime(billing_month.strip(), "%b %y")
+    except ValueError:
+        return None
+
+
 # Serializes the one-time move of the old shared history file, so only one entry claims it
 _LEGACY_STORE_LOCK = asyncio.Lock()
 
@@ -416,7 +426,15 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.debug("Could not determine predecessor cost sum for %s: %s", cost_statistic_id, e)
 
-        # Build cost StatisticData list.
+        # Build cost StatisticData list. A billed day is priced like its bill:
+        # gas cost for the bill's month and the customer charge spread over
+        # the bill period's days. Days of the open current period have no
+        # billing month yet; they use their own month and 30 days until the
+        # period is billed and re-imported.
+        period_days: dict[str, int] = {}
+        for record in sorted_history:
+            if month := record.get("billing_month"):
+                period_days[month] = period_days.get(month, 0) + 1
         cost_statistics = []
         for record in sorted_history:
             dt = record["_dt"]
@@ -425,7 +443,10 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
             try:
                 usage_val = float(usage)
-                daily_cost = self._calculate_daily_cost_for_date(usage_val, dt)
+                month = record.get("billing_month")
+                daily_cost = self._calculate_daily_cost_for_date(
+                    usage_val, dt, _bill_month(month), period_days.get(month, 30)
+                )
                 cost_cumulative_sum += daily_cost
                 timestamp_utc = dt_util.as_utc(dt)
                 cost_statistics.append(StatisticData(
@@ -846,7 +867,13 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Could not parse next meter read date: %s", date_str)
         return None
 
-    def _calculate_daily_cost_for_date(self, usage: float, day: datetime | None = None) -> float:
+    def _calculate_daily_cost_for_date(
+        self,
+        usage: float,
+        day: datetime | None = None,
+        bill_month: datetime | None = None,
+        period_days: float = 30.0,
+    ) -> float:
         """Calculate the accurate cost for a single day's usage.
 
         Reuses calculate_total_cost with pro_rate_days=1 to correctly
@@ -857,17 +884,23 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             usage: Daily gas usage in CCF.
             day: The day being priced, so it gets that month's gas cost
                 and customer charge. None prices it at today's rates.
+            bill_month: The month of the bill the day is on, whose gas cost
+                applies; None uses the day's own month.
+            period_days: Days in the day's bill period.
 
         Returns:
-            Cost in USD for that day's usage.
+            Cost in USD for that day's usage, unrounded so a bill period's
+            days add up to its bill.
         """
         result = self.calculate_total_cost(
             usage=usage,
             include_fixed=True,
             pro_rate_days=1,
             when=day,
+            gas_cost_month=bill_month,
+            period_days=period_days,
         )
-        return result["total"]
+        return result["total_exact"]
 
     def _gas_cost_rate(self, when: datetime | None) -> float:
         """Gas cost $/CCF: the fetched rate for `when`'s month, else the current one, else the option."""
@@ -927,6 +960,8 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         wna_charge: float | None = None,
         pro_rate_days: int | None = None,
         when: datetime | None = None,
+        gas_cost_month: datetime | None = None,
+        period_days: float = 30.0,
     ) -> dict[str, Any]:
         """Calculate total cost with all components.
 
@@ -937,6 +972,9 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             pro_rate_days: If set, pro-rate fixed charge for this many days
             when: Date being priced, for its month's gas cost and seasonal
                 customer charge (None: today)
+            gas_cost_month: Month whose gas cost applies, when it isn't
+                `when`'s: a bill charges its own month's rate for every day
+            period_days: Days the fixed charge is spread over
 
         Returns:
             Dict with 'total' and 'breakdown' keys
@@ -953,7 +991,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Pro-rate fixed charge if requested
         if pro_rate_days is not None and include_fixed:
-            fixed = fixed * (pro_rate_days / 30.0)
+            fixed = fixed * (pro_rate_days / period_days)
 
         # Consumption charge
         consumption_rate = float(base["usage_rate"])
@@ -969,7 +1007,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             wna_charge = usage * self._wna_rate(when)
         
         # Gas cost charge (GCR / GCA / PGA)
-        gcr_rate = self._gas_cost_rate(when)
+        gcr_rate = self._gas_cost_rate(gas_cost_month or when)
         gcr_charge = usage * gcr_rate
 
         # Other per-CCF charges (Mid-Tex: Winter Storm Uri surcharge)
@@ -986,6 +1024,7 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         
         return {
             "total": round(total_cost, 2),
+            "total_exact": total_cost,
             "breakdown": {
                 "fixed_charge": round(fixed, 2),
                 "consumption_charge": round(consumption_charge, 2),
