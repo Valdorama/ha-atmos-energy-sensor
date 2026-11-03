@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements_dev.txt
+            custom_components/atmos_energy/manifest.json
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # The integration's own requirements, straight from the manifest so they never drift
+          python -c "import json; print('\n'.join(json.load(open('custom_components/atmos_energy/manifest.json'))['requirements']))" > requirements_manifest.txt
+          pip install -r requirements_dev.txt -r requirements_manifest.txt
+
+      - name: Pure tests (no Home Assistant)
+        run: pytest tests/test_gas_cost_parser.py tests/test_rates_data.py
+
+      # A separate run: modules elsewhere in tests/ replace homeassistant.* with mocks at
+      # import time, which breaks a real Home Assistant in the same session
+      - name: Home Assistant tests
+        run: pytest tests_ha tests/test_persistence.py

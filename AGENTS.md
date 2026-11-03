@@ -16,6 +16,7 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 - **AI Agent Best Practices**: Priority must be placed on **reliability, robustness, and performance**. Agents should proactively handle edge cases, network failures, and API inconsistencies.
 - **Test-First**: Always attempt to reproduce a bug or define a new feature with a test case in `tests/test_reproduction.py` or `tests/test_api.py` before modifying core logic.
 - **Verification**: Ensure all tests pass (`python -m unittest discover tests`) after any non-trivial change.
+- **CI**: `.github/workflows/tests.yml` (GitHub Actions, Linux, Python 3.13) runs on every push to `master` and every PR: the pure suites (`tests/test_gas_cost_parser.py`, `tests/test_rates_data.py`), then `tests_ha` plus `tests/test_persistence.py` in a separate pytest run against a real HA. This is the only place `tests_ha` runs, since HA can't run on Windows. Add new `tests/` modules to the workflow only if they pass on a clean checkout. Dependencies come from `requirements_dev.txt` plus the manifest's `requirements`.
 
 ### 2. Versioning & Releases
 - **Semantic Versioning**: Use the `v0.x.x` format.
