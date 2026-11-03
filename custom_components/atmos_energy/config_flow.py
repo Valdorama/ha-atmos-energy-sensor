@@ -397,7 +397,8 @@ class AtmosEnergyOptionsFlowHandler(config_entries.OptionsFlow):
     async def _async_step_after_account(self):
         """Branch based on mode: daily modes go on to the rate region and rates."""
         if self._data[CONF_OPERATION_MODE] == MODE_MONTHLY:
-            return self.async_create_entry(title="", data={})
+            # Keep the stored options; saving {} would drop the region and rates
+            return self.async_create_entry(title="", data=self._options)
 
         return await self.async_step_region()
 
