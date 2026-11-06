@@ -27,6 +27,8 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
     - Internal Cleanup
     - Breaking Changes or Update Instructions
 
+- **HACS default store**: `.github/workflows/validate.yml` runs the HACS Action and Hassfest; both must pass before a release for the HACS default repository. Hassfest rules met so far: manifest keys `domain`, `name`, then alphabetical; no `aiohttp` (or other HA core deps) in `requirements`; `recorder` in `dependencies` (statistics import). `hacs.json` only accepts HACS's own keys (donations go in `.github/FUNDING.yml`) and sets `country: US`.
+
 ### 3. Core Logic Patterns
 - **Centralized Verification**: Use the `_verify_response` method in `AtmosEnergyApiClient` to handle all URL redirects, HTML detection, and portal error messages.
 - **Session Lifecycle**: Remember that Atmos Energy requires a multi-hop login flow (Form -> POST -> Landing Page) to properly initialize the session for file downloads.
