@@ -27,7 +27,8 @@ MONTHLY = {
 
 
 @pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
+def auto_enable_custom_integrations(recorder_mock, enable_custom_integrations):
+    """The manifest depends on recorder (statistics), so set one up before hass."""
     yield
 
 

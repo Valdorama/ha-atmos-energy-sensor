@@ -1,6 +1,9 @@
 {
   "domain": "atmos_energy",
   "name": "Atmos Energy",
+  "categories": [
+    "energy.meters_monitoring"
+  ],
   "codeowners": [
     "@Valdorama"
   ],
