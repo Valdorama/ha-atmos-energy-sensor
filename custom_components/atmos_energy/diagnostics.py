@@ -3,10 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+
+# Users attach diagnostics to public issues. The entry title is the login
+# username, plus the street address for multi-account logins.
+TO_REDACT = {"title", "unique_id", "username", "password", "account_number", "service_address"}
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
@@ -14,22 +19,23 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     
-    return {
+    diagnostics = {
         "entry": {
             "entry_id": entry.entry_id,
             "title": entry.title,
+            "unique_id": entry.unique_id,
             "version": entry.version,
             "domain": entry.domain,
         },
         "data_config": {
-            "username": entry.data.get("username", "")[:3] + "***",
+            "username": entry.data.get("username"),
             "has_password": "password" in entry.data,
-            "account_number": "***" + entry.data["account_number"][-4:] if entry.data.get("account_number") else None,
+            "account_number": entry.data.get("account_number"),
             "has_service_address": bool(entry.data.get("service_address")),
         },
         "coordinator": {
             "last_update_success": coordinator.last_update_success,
-            "last_update_success_time": coordinator.last_update_success_time.isoformat() if coordinator.last_update_success_time else None,
+            "last_update": coordinator.last_update.isoformat() if coordinator.last_update else None,
             "update_interval": coordinator.update_interval.total_seconds() if coordinator.update_interval else None,
         },
         "coordinator_data": coordinator.data if coordinator.data else {},
@@ -59,3 +65,4 @@ async def async_get_config_entry_diagnostics(
         },
         "options": dict(entry.options),
     }
+    return async_redact_data(diagnostics, TO_REDACT)

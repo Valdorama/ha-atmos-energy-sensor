@@ -29,6 +29,8 @@ This file provides persisted guidance and "rules of engagement" for AI agents wo
 
 - **HACS default store**: `.github/workflows/validate.yml` runs the HACS Action and Hassfest; both must pass before a release for the HACS default repository. Hassfest rules met so far: manifest keys `domain`, `name`, then alphabetical; no `aiohttp` (or other HA core deps) in `requirements`; `recorder` in `dependencies` (statistics import). `hacs.json` only accepts HACS's own keys (donations go in `.github/FUNDING.yml`) and sets `country: US`.
 
+- **HACS review (hacs/default#13548)**: diagnostics go through `async_redact_data` (`TO_REDACT` covers title, unique_id, username, password, account number, service address: the title is the username plus street address). Actions are registered once in `async_setup` (so `CONFIG_SCHEMA = cv.config_entry_only_config_schema`); `populate_past_usage` is an admin service and `_resolve_import_path` (executor) accepts only real paths inside the config folder or `allowlist_external_dirs`. No blocking filesystem calls in async code.
+
 ### 3. Core Logic Patterns
 - **Centralized Verification**: Use the `_verify_response` method in `AtmosEnergyApiClient` to handle all URL redirects, HTML detection, and portal error messages.
 - **Session Lifecycle**: Remember that Atmos Energy requires a multi-hop login flow (Form -> POST -> Landing Page) to properly initialize the session for file downloads.

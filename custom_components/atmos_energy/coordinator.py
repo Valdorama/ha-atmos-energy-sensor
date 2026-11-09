@@ -9,7 +9,7 @@ from typing import Any
 import aiohttp
 import pandas as pd
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -122,6 +122,11 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
             name=DOMAIN,
             update_interval=SCAN_INTERVAL,
         )
+
+    @property
+    def history_count(self) -> int:
+        """Days of usage history stored for this entry."""
+        return len(self._history)
 
     def _street(self) -> str:
         """First line of the service address; set only for multi-account logins."""
@@ -497,28 +502,19 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
     async def async_import_historical_xls(self, file_path: str):
         """Import historical daily usage from a local XLS file."""
         _LOGGER.info("Starting historical data import from: %s", file_path)
-        
-        # Security: Ensure file is within config directory
-        config_dir = self.hass.config.config_dir
-        abs_path = os.path.abspath(file_path)
-        
-        if not abs_path.startswith(os.path.abspath(config_dir)):
-             # If it's a relative path, try joining with config_dir
-             abs_path = os.path.abspath(os.path.join(config_dir, file_path))
-             if not abs_path.startswith(os.path.abspath(config_dir)):
-                 raise ValueError(f"Access denied: file {file_path} is outside of config directory")
 
-        if not os.path.exists(abs_path):
-            raise FileNotFoundError(f"Historical XLS file not found at: {abs_path}")
-
-        try:
-            # Move blocking file read to a thread executor
-            def read_file(path):
+        # Resolving the path and reading the file both touch the disk, so both run in the executor
+        def read_file():
+            path = self._resolve_import_path(file_path)
+            try:
                 with open(path, 'rb') as f:
                     return f.read()
-            
-            content = await self.hass.async_add_executor_job(read_file, abs_path)
+            except (FileNotFoundError, IsADirectoryError) as err:
+                raise ServiceValidationError(f"Historical XLS file not found: {file_path}") from err
 
+        content = await self.hass.async_add_executor_job(read_file)
+
+        try:
             # Use the API client's parsing logic (it doesn't require a live session)
             # Use public helper method if available, or call protected one
             data = await self.client._parse_xls_data(content)
@@ -534,6 +530,26 @@ class AtmosEnergyDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error("Failed to import historical data from %s: %s", file_path, e)
             raise
+
+    def _resolve_import_path(self, file_path: str) -> str:
+        """The real path of a spreadsheet to import. Blocking: run it in the executor.
+
+        A relative path is taken from the config folder. The file must be inside the
+        config folder or a folder in allowlist_external_dirs; symlinks and ".." are
+        resolved first, so neither can point outside them.
+        """
+        config_dir = os.path.realpath(self.hass.config.config_dir)
+        # join() ignores config_dir when file_path is absolute
+        path = os.path.realpath(os.path.join(config_dir, file_path))
+        try:
+            in_config = os.path.commonpath([path, config_dir]) == config_dir
+        except ValueError:  # different drives
+            in_config = False
+        if in_config or self.hass.config.is_allowed_path(path):
+            return path
+        raise ServiceValidationError(
+            f"{file_path} is outside the Home Assistant config folder and allowlist_external_dirs"
+        )
 
     def _parse_date(self, date_str: str) -> datetime | None:
         """Parse Atmos date string into datetime object."""

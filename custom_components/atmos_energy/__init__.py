@@ -2,12 +2,16 @@
 import asyncio
 import logging
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers.service import async_register_admin_service
+from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, CONF_ACCOUNT_NUMBER, STORAGE_VERSION, history_storage_key, account_selection_issue_id
 from .api import AtmosEnergyApiClient
@@ -16,6 +20,49 @@ from .coordinator import AtmosEnergyDataUpdateCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor"]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+POPULATE_SCHEMA = vol.Schema({
+    vol.Required("file_path"): cv.string,
+    vol.Optional("config_entry"): cv.string,
+})
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration's actions once, for every entry."""
+
+    async def handle_populate_past_usage(call: ServiceCall):
+        """Import a daily usage spreadsheet from disk. Admin only: it reads a local file."""
+        file_path = call.data["file_path"]
+        coordinators = hass.data.get(DOMAIN, {})
+        if not coordinators:
+            raise ServiceValidationError("No Atmos Energy account is loaded")
+
+        # The spreadsheet belongs to one meter, so with several entries the caller must say which
+        entry_id = call.data.get("config_entry")
+        if entry_id:
+            if entry_id not in coordinators:
+                raise ServiceValidationError(f"No loaded Atmos Energy entry with id {entry_id}")
+            coordinator = coordinators[entry_id]
+        elif len(coordinators) == 1:
+            coordinator = next(iter(coordinators.values()))
+        else:
+            raise ServiceValidationError(
+                "Several Atmos Energy accounts are set up; choose one with the config_entry field"
+            )
+        await coordinator.async_import_historical_xls(file_path)
+
+    async def handle_refresh_current_usage(call: ServiceCall):
+        """Trigger an immediate refresh regardless of the schedule, for every account."""
+        for coordinator in list(hass.data.get(DOMAIN, {}).values()):
+            await coordinator.async_refresh()
+
+    async_register_admin_service(
+        hass, DOMAIN, "populate_past_usage", handle_populate_past_usage, schema=POPULATE_SCHEMA
+    )
+    hass.services.async_register(DOMAIN, "refresh_current_usage", handle_refresh_current_usage)
+    return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Atmos Energy from a config entry."""
@@ -39,38 +86,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
  
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
-    # Register services
-    async def handle_populate_past_usage(call):
-        """Handle the populate_past_usage service call."""
-        file_path = call.data.get("file_path")
-        coordinators = hass.data[DOMAIN]
-        if not coordinators:
-            _LOGGER.error("No Atmos Energy coordinators found to handle service call")
-            return
-
-        # The spreadsheet belongs to one meter, so with several entries the caller must say which
-        entry_id = call.data.get("config_entry")
-        if entry_id:
-            if entry_id not in coordinators:
-                raise ServiceValidationError(f"No loaded Atmos Energy entry with id {entry_id}")
-            coordinator = coordinators[entry_id]
-        elif len(coordinators) == 1:
-            coordinator = next(iter(coordinators.values()))
-        else:
-            raise ServiceValidationError(
-                "Several Atmos Energy accounts are set up; choose one with the config_entry field"
-            )
-        await coordinator.async_import_historical_xls(file_path)
-
-    async def handle_refresh_current_usage(call):
-        """Handle the refresh_current_usage service call."""
-        # Trigger an immediate refresh regardless of the schedule, for every account
-        for coordinator in list(hass.data[DOMAIN].values()):
-            await coordinator.async_refresh()
-
-    hass.services.async_register(DOMAIN, "populate_past_usage", handle_populate_past_usage)
-    hass.services.async_register(DOMAIN, "refresh_current_usage", handle_refresh_current_usage)
-
     # Listen for option changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
